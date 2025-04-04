@@ -83,15 +83,6 @@ async function sendMovementNotifications({
 
         const todayDateString = moment.utc().format('YYYY-MM-DD');
 
-        // Registro de parámetros de consulta para debugging
-        console.log('Fecha inicio:', today);
-        console.log('Fecha fin:', futureDate);
-        console.log('UserId:', userObjectId);
-        console.log('Configuración usuario:', {
-            notifyOnceOnly: userExpirationSettings.notifyOnceOnly,
-            daysInAdvance: daysInAdvance
-        });
-
         const ObjectId = mongoose.Types.ObjectId;
         // Construir la consulta principal para movimientos próximos a expirar
         let query = {
@@ -206,12 +197,6 @@ async function sendMovementNotifications({
 
         // Búsqueda de movimientos que coincidan con los criterios
         const upcomingMovements = await Movement.find(query).sort({ dateExpiration: 1 });
-
-        // Loguear resultados para debugging
-        console.log(`Movimientos encontrados: ${upcomingMovements.length}`);
-        upcomingMovements.forEach(movement => {
-            console.log(`ID: ${movement._id}, Título: ${movement.title}, Fecha Expiración: ${movement.dateExpiration}`);
-        });
 
         if (upcomingMovements.length === 0) {
             return {
@@ -346,7 +331,6 @@ async function sendMovementNotifications({
         };
 
     } catch (error) {
-        console.error(`Error al enviar notificaciones de movimientos: ${error.message}`);
         return {
             success: false,
             statusCode: 500,
@@ -796,15 +780,6 @@ async function sendTaskNotifications({
 
         const todayDateString = today.toISOString().split('T')[0];
 
-        // Registro de parámetros de consulta para debugging
-        console.log('Fecha inicio:', today);
-        console.log('Fecha fin:', futureDate);
-        console.log('UserId:', userObjectId);
-        console.log('Configuración usuario:', {
-            notifyOnceOnly: userExpirationSettings.notifyOnceOnly,
-            daysInAdvance: daysInAdvance
-        });
-
         // Construir la consulta principal (simplificada)
         let query = {
             // Convertir userId a string para asegurar compatibilidad
@@ -918,11 +893,6 @@ async function sendTaskNotifications({
         // Búsqueda directa en lugar de agregación
         const upcomingTasks = await Task.find(query).sort({ dueDate: 1 });
 
-        // Loguear resultados para debugging
-        console.log(`Tareas encontradas: ${upcomingTasks.length}`);
-        upcomingTasks.forEach(task => {
-            console.log(`ID: ${task._id}, Nombre: ${task.name}, Fecha: ${task.dueDate}, Status: ${task.status}`);
-        });
 
         if (upcomingTasks.length === 0) {
             return {
@@ -1105,7 +1075,6 @@ async function sendTaskNotifications({
         };
 
     } catch (error) {
-        console.error(`Error al enviar notificaciones de tareas: ${error.message}`);
         return {
             success: false,
             statusCode: 500,
