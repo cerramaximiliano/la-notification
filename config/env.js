@@ -1,6 +1,7 @@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const logger = require('./logger');
 
+
 module.exports = async () => {
     // Crear instancia del cliente de SecretsManager
     const secretsManager = new SecretsManagerClient({ region: 'sa-east-1' });

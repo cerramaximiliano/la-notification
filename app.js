@@ -3,7 +3,6 @@ const dotenv = require('dotenv');
 const retrieveSecrets = require('./config/env');
 const fs = require('fs/promises');
 const logger = require("./config/logger");
-const { setupCronJobs } = require("./config/cron");
 
 const app = express();
 const PORT = process.env.PORT_NOTIFICATIONS || 3003;
@@ -31,6 +30,7 @@ const initializeApp = async () => {
         const connectDB = require("./config/db");
         connectDB();
 
+        const { setupCronJobs } = require("./config/cron");
         setupCronJobs()
 
         app.listen(PORT, () => {
