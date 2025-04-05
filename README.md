@@ -7,6 +7,7 @@ Aplicación para el envío automatizado de notificaciones a usuarios mediante ta
 - Notificaciones automáticas de eventos de calendario
 - Notificaciones automáticas de tareas por vencer
 - Notificaciones automáticas de movimientos próximos a expirar
+- Notificaciones push en tiempo real mediante WebSockets
 - Configuración personalizada por usuario
 - Respeta las preferencias de notificación de cada usuario
 - Log detallado de todas las operaciones
@@ -54,6 +55,9 @@ Aplicación para el envío automatizado de notificaciones a usuarios mediante ta
 
    # Configuración por defecto
    DEFAULT_DAYS_IN_ADVANCE=5
+   
+   # Puerto para el servidor
+   PORT_NOTIFICATIONS=3004
    ```
 
 5. Agrega tus modelos en la carpeta `models/`:
@@ -87,14 +91,17 @@ notification-cron-app/
 │   └── cron.js            # Configuración de tareas programadas
 ├── services/              # Servicios de la aplicación
 │   ├── notifications.js   # Lógica de notificaciones
-│   └── email.js           # Servicio de correo electrónico
+│   ├── email.js           # Servicio de correo electrónico
+│   └── websocket.js       # Servicio de WebSocket para notificaciones push
 ├── cron/                  # Definición de trabajos cron
 │   └── notificationJobs.js # Implementación de trabajos
+├── client-example.js      # Ejemplo de cliente WebSocket para pruebas
 └── models/                # Modelos de datos (debes agregarlos)
     ├── User.js            # Modelo de usuario
     ├── Event.js           # Modelo de evento
     ├── Task.js            # Modelo de tarea
-    └── Movement.js        # Modelo de movimiento
+    ├── Movement.js        # Modelo de movimiento
+    └── Alert.js           # Modelo de alertas y notificaciones
 ```
 
 ## Configuración de tareas programadas
@@ -122,6 +129,51 @@ Ejemplos:
 - `0 8 * * *`: Todos los días a las 8:00 AM
 - `0 */2 * * *`: Cada 2 horas, en el minuto 0
 - `0 8-17 * * 1-5`: De lunes a viernes, cada hora desde las 8:00 AM hasta las 5:00 PM
+
+## Notificaciones Push con WebSockets
+
+La aplicación incluye un sistema de notificaciones push en tiempo real usando WebSockets con socket.io.
+
+### Funcionamiento
+
+1. El servidor mantiene una conexión WebSocket con los clientes conectados
+2. Cuando se crea una nueva alerta, se envía automáticamente a los clientes conectados
+3. Si un cliente no está conectado, las alertas quedan pendientes y se envían cuando el cliente se conecta
+4. Las alertas se entregan solo una vez
+
+### Uso en el cliente
+
+#### Conectar al WebSocket:
+
+```javascript
+// En el navegador
+const socket = io('http://tu-servidor:3004');
+
+// Autenticar con el ID del usuario
+socket.on('connect', () => {
+  socket.emit('authenticate', userId);
+});
+
+// Escuchar nuevas alertas
+socket.on('new_alert', (alert) => {
+  console.log('Nueva alerta:', alert);
+  // Mostrar notificación al usuario
+});
+
+// Recibir alertas pendientes al conectar
+socket.on('pending_alerts', (alerts) => {
+  console.log('Alertas pendientes:', alerts);
+  // Procesar alertas pendientes
+});
+```
+
+### Ejemplo
+
+Se incluye un archivo `client-example.js` que muestra cómo implementar un cliente de prueba:
+
+```bash
+node client-example.js
+```
 
 ## Logs
 

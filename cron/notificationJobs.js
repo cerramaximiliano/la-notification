@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const moment = require('moment');
+const fs = require('fs');
+const path = require('path');
 const { sendEmail } = require('../services/email');
 const {
   sendCalendarNotifications,
@@ -615,8 +617,272 @@ async function movementNotificationJob() {
   }
 }
 
+/**
+ * Trabajo cron para eliminar/limpiar todos los archivos de logs
+ * @returns {Object} Resultado de la operación
+ */
+async function clearLogsJob() {
+  logger.info('Iniciando trabajo de limpieza de logs');
+  
+  const logDir = path.join(__dirname, '../logs');
+  let deleted = 0;
+  let errors = 0;
+  
+  try {
+    // Obtener información del sistema para el informe
+    const diskUsageBefore = await getDiskUsageInfo();
+    const memoryUsage = process.memoryUsage();
+    const uptime = process.uptime();
+    
+    // Obtener tamaños de los archivos de log antes de limpiarlos
+    const fileStats = {};
+    const files = fs.readdirSync(logDir);
+    
+    for (const file of files) {
+      try {
+        const filePath = path.join(logDir, file);
+        const stats = fs.statSync(filePath);
+        fileStats[file] = {
+          size: (stats.size / 1024 / 1024).toFixed(2), // Tamaño en MB
+          modified: stats.mtime
+        };
+      } catch (err) {
+        logger.error(`Error al obtener estadísticas del archivo ${file}: ${err.message}`);
+      }
+    }
+    
+    // Limpiar archivos de log
+    for (const file of files) {
+      // Evitar eliminar archivos que están siendo usados activamente por PM2
+      if (file !== 'pm2-error.log' && file !== 'pm2-out.log') {
+        try {
+          const filePath = path.join(logDir, file);
+          // Vaciar el contenido del archivo en lugar de eliminarlo
+          fs.writeFileSync(filePath, '', { flag: 'w' });
+          logger.info(`Archivo de log limpiado: ${file}`);
+          deleted++;
+        } catch (err) {
+          logger.error(`Error al limpiar el archivo de log ${file}: ${err.message}`);
+          errors++;
+        }
+      }
+    }
+    
+    // Obtener uso de disco después de la limpieza
+    const diskUsageAfter = await getDiskUsageInfo();
+    
+    // Calcular espacio liberado
+    const spaceSaved = diskUsageBefore.used - diskUsageAfter.used;
+    
+    // Obtener información sobre conexiones a la base de datos
+    const dbStatus = mongoose.connection.readyState === 1 ? 'Conectado' : 'Desconectado';
+    
+    // Resumen final
+    const summary = {
+      success: true,
+      filesProcessed: files.length,
+      filesCleared: deleted,
+      errors: errors,
+      fileStats: fileStats,
+      systemInfo: {
+        diskUsageBefore: diskUsageBefore,
+        diskUsageAfter: diskUsageAfter,
+        spaceSaved: (spaceSaved / 1024 / 1024).toFixed(2) + ' MB',
+        memoryUsage: {
+          rss: (memoryUsage.rss / 1024 / 1024).toFixed(2) + ' MB',
+          heapTotal: (memoryUsage.heapTotal / 1024 / 1024).toFixed(2) + ' MB',
+          heapUsed: (memoryUsage.heapUsed / 1024 / 1024).toFixed(2) + ' MB'
+        },
+        uptime: formatUptime(uptime),
+        dbStatus: dbStatus,
+        nodeVersion: process.version,
+        platform: process.platform,
+        serverTime: new Date().toLocaleString('es-ES', { timeZone: 'America/Argentina/Buenos_Aires' })
+      }
+    };
+    
+    logger.info(`Trabajo de limpieza de logs completado: ${JSON.stringify(summary)}`);
+    
+    // Si está configurado, enviar email al administrador con el resumen
+    if (process.env.ADMIN_EMAIL) {
+      try {
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const subject = `Law||Analytics: Informe de limpieza de logs`;
+        
+        let htmlContent = `
+          <h2>Informe de limpieza de logs</h2>
+          <p>El sistema ha completado la limpieza semanal de archivos de log:</p>
+          
+          <table style="border-collapse: collapse; width: 100%;">
+              <tr style="background-color: #f5f5f5;">
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Total</th>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Archivos procesados</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.filesProcessed}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Archivos limpiados</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.filesCleared}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Errores</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.errors}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Espacio liberado</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.spaceSaved}</td>
+              </tr>
+          </table>
+          
+          <h3>Detalle de archivos procesados</h3>
+          <table style="border-collapse: collapse; width: 100%;">
+              <tr style="background-color: #f5f5f5;">
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Archivo</th>
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Tamaño (MB)</th>
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Última modificación</th>
+              </tr>
+              ${Object.entries(summary.fileStats).map(([file, stats]) => `
+                <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">${file}</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${stats.size}</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${new Date(stats.modified).toLocaleString('es-ES')}</td>
+                </tr>
+              `).join('')}
+          </table>
+          
+          <h3>Estado del sistema</h3>
+          <table style="border-collapse: collapse; width: 100%;">
+              <tr style="background-color: #f5f5f5;">
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
+                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Valor</th>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Uso de disco antes</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${(summary.systemInfo.diskUsageBefore.used / 1024 / 1024 / 1024).toFixed(2)} GB de ${(summary.systemInfo.diskUsageBefore.total / 1024 / 1024 / 1024).toFixed(2)} GB (${summary.systemInfo.diskUsageBefore.usedPercentage}%)</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Uso de disco después</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${(summary.systemInfo.diskUsageAfter.used / 1024 / 1024 / 1024).toFixed(2)} GB de ${(summary.systemInfo.diskUsageAfter.total / 1024 / 1024 / 1024).toFixed(2)} GB (${summary.systemInfo.diskUsageAfter.usedPercentage}%)</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Memoria RAM (RSS)</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.memoryUsage.rss}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Estado de la BD</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.dbStatus}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Tiempo de actividad</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.uptime}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Versión de Node.js</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.nodeVersion}</td>
+              </tr>
+              <tr>
+                  <td style="border: 1px solid #ddd; padding: 8px;">Puerto del servidor</td>
+                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${process.env.PORT_NOTIFICATIONS || 3004}</td>
+              </tr>
+          </table>
+          
+          <p>Fecha y hora del informe: ${summary.systemInfo.serverTime}</p>
+          <p>Saludos,<br>Sistema de notificaciones de Law||Analytics</p>
+        `;
+        
+        let textContent = `Informe de limpieza de logs\n\n`;
+        textContent += `El sistema ha completado la limpieza semanal de archivos de log:\n\n`;
+        textContent += `- Archivos procesados: ${summary.filesProcessed}\n`;
+        textContent += `- Archivos limpiados: ${summary.filesCleared}\n`;
+        textContent += `- Errores: ${summary.errors}\n`;
+        textContent += `- Espacio liberado: ${summary.systemInfo.spaceSaved}\n\n`;
+        
+        textContent += `Estado del sistema:\n`;
+        textContent += `- Uso de disco: ${(summary.systemInfo.diskUsageAfter.used / 1024 / 1024 / 1024).toFixed(2)} GB de ${(summary.systemInfo.diskUsageAfter.total / 1024 / 1024 / 1024).toFixed(2)} GB (${summary.systemInfo.diskUsageAfter.usedPercentage}%)\n`;
+        textContent += `- Memoria RAM: ${summary.systemInfo.memoryUsage.rss}\n`;
+        textContent += `- Estado de la BD: ${summary.systemInfo.dbStatus}\n`;
+        textContent += `- Tiempo de actividad: ${summary.systemInfo.uptime}\n\n`;
+        
+        textContent += `Fecha y hora del informe: ${summary.systemInfo.serverTime}\n\n`;
+        textContent += `Saludos,\nSistema de notificaciones de Law||Analytics`;
+        
+        await sendEmail(adminEmail, subject, htmlContent, textContent);
+        logger.info(`Informe de limpieza de logs enviado al administrador: ${adminEmail}`);
+      } catch (emailError) {
+        logger.error(`Error al enviar informe de limpieza de logs al administrador: ${emailError.message}`);
+      }
+    }
+    
+    return summary;
+    
+  } catch (err) {
+    logger.error(`Error general en el trabajo de limpieza de logs: ${err.message}`);
+    return {
+      success: false,
+      error: err.message
+    };
+  }
+}
+
+/**
+ * Obtiene información sobre el uso del disco
+ * @returns {Promise<Object>} Información del disco
+ */
+async function getDiskUsageInfo() {
+  try {
+    // Usar 'df' para obtener información del sistema de archivos
+    const { execSync } = require('child_process');
+    const output = execSync('df -k / | tail -1').toString().trim();
+    const parts = output.split(/\s+/);
+    
+    // Formato típico: Filesystem 1K-blocks Used Available Use% Mounted on
+    const total = parseInt(parts[1], 10) * 1024; // Convertir bloques de 1K a bytes
+    const used = parseInt(parts[2], 10) * 1024;
+    const available = parseInt(parts[3], 10) * 1024;
+    const usedPercentage = parts[4].replace('%', '');
+    
+    return {
+      total,
+      used,
+      available,
+      usedPercentage
+    };
+  } catch (error) {
+    logger.error(`Error al obtener información del disco: ${error.message}`);
+    return {
+      total: 0,
+      used: 0,
+      available: 0,
+      usedPercentage: '0'
+    };
+  }
+}
+
+/**
+ * Formatea el tiempo de actividad en formato legible
+ * @param {number} uptime - Tiempo de actividad en segundos
+ * @returns {string} Tiempo formateado
+ */
+function formatUptime(uptime) {
+  const days = Math.floor(uptime / 86400);
+  const hours = Math.floor((uptime % 86400) / 3600);
+  const minutes = Math.floor((uptime % 3600) / 60);
+  const seconds = Math.floor(uptime % 60);
+  
+  let result = '';
+  if (days > 0) result += `${days} día${days > 1 ? 's' : ''}, `;
+  if (hours > 0) result += `${hours} hora${hours > 1 ? 's' : ''}, `;
+  if (minutes > 0) result += `${minutes} minuto${minutes > 1 ? 's' : ''}, `;
+  result += `${seconds} segundo${seconds > 1 ? 's' : ''}`;
+  
+  return result;
+}
+
 module.exports = {
   calendarNotificationJob,
   taskNotificationJob,
-  movementNotificationJob
+  movementNotificationJob,
+  clearLogsJob
 };

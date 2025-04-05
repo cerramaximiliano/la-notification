@@ -3,9 +3,18 @@ const dotenv = require('dotenv');
 const retrieveSecrets = require('./config/env');
 const fs = require('fs/promises');
 const logger = require("./config/logger");
+const http = require('http');
+const socketIO = require('socket.io');
 
 const app = express();
-const PORT = process.env.PORT_NOTIFICATIONS || 3003;
+const PORT = process.env.PORT_NOTIFICATIONS || 3004;
+const server = http.createServer(app);
+const io = socketIO(server, {
+    cors: {
+        origin: "*", // Permitir conexiones desde cualquier origen en desarrollo
+        methods: ["GET", "POST"]
+    }
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -30,11 +39,16 @@ const initializeApp = async () => {
         const connectDB = require("./config/db");
         connectDB();
 
-        const { setupCronJobs } = require("./config/cron");
-        setupCronJobs()
+        // Configurar el WebSocket en un módulo separado
+        const websocketService = require('./services/websocket');
+        websocketService.setupWebSocket(io);
 
-        app.listen(PORT, () => {
-            logger.info(`Servidor iniciado en el puerto ${PORT}`);
+        const { setupCronJobs } = require("./config/cron");
+        setupCronJobs();
+
+        // Iniciar el servidor HTTP con WebSocket integrado
+        server.listen(PORT, () => {
+            logger.info(`Servidor iniciado en el puerto ${PORT} con soporte WebSocket`);
         });
 
     } catch (error) {
@@ -45,14 +59,19 @@ const initializeApp = async () => {
 
 const mongoose = require('mongoose');
 
+// Exportar io para usarlo en otros módulos
+global.io = io;
+
+// Proceso para mantener la aplicación viva
+setInterval(() => {
+    logger.debug('Keepalive check running...');
+}, 300000); // Cada 5 minutos
+
 process.on('SIGINT', async () => {
     logger.info('Cerrando conexión a la base de datos...');
     await mongoose.connection.close();
     logger.info('Conexión a la base de datos cerrada');
     process.exit(0);
 });
-
-
-
 
 initializeApp();

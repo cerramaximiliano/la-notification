@@ -2,7 +2,8 @@ const cron = require('node-cron');
 const {
   calendarNotificationJob,
   taskNotificationJob,
-  movementNotificationJob
+  movementNotificationJob,
+  clearLogsJob
 } = require('../cron/notificationJobs');
 const { sendEmail } = require('../services/email');
 const logger = require('./logger');
@@ -92,6 +93,21 @@ function setupCronJobs() {
   // Trabajo adicional para mantener viva la conexión a la base de datos
   cron.schedule('*/30 * * * *', () => {
     logger.debug('Keepalive de la base de datos ejecutado');
+  });
+  
+  // Trabajo para limpiar los logs semanalmente (domingo a las 2:00 AM)
+  logger.info('Configurando trabajo de limpieza de logs: 0 2 * * 0');
+  cron.schedule('0 2 * * 0', async () => {
+    logger.info('Ejecutando trabajo de limpieza de logs');
+    try {
+      const result = await clearLogsJob();
+      logger.info(`Trabajo de limpieza de logs completado: ${result.filesCleared} archivos limpiados`);
+    } catch (error) {
+      logger.error(`Error en trabajo de limpieza de logs: ${error.message}`);
+    }
+  }, {
+    scheduled: true,
+    timezone: 'America/Argentina/Buenos_Aires'
   });
 }
 

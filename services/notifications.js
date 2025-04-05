@@ -553,7 +553,7 @@ async function sendMovementBrowserAlerts({
             logger.debug(`Alerta de navegador para movimiento ${movement._id} (${movement.title}) usando configuración de días: ${movementSpecificDays}`);
 
             // Crear la alerta en el modelo Alert
-            await Alert.create({
+            const newAlert = await Alert.create({
                 userId: userId,
                 folderId: movement.folderId || mongoose.Types.ObjectId(), // Si no hay folderId, creamos uno temporal
                 avatarType: 'icon',
@@ -564,6 +564,21 @@ async function sendMovementBrowserAlerts({
                 secondaryText: `${movement.title} - ${formattedDate}`,
                 actionText: 'Ver movimiento'
             });
+            
+            // Intentar enviar la alerta por WebSocket si está disponible
+            try {
+                const websocketService = require('./websocket');
+                
+                if (websocketService.isUserConnected(userId)) {
+                    // Usuario conectado, enviar notificación push inmediatamente
+                    await websocketService.sendPushAlert(userId, newAlert);
+                    logger.debug(`Alerta push enviada al usuario ${userId} para movimiento ${movement._id}`);
+                } else {
+                    logger.debug(`Usuario ${userId} no conectado, la alerta quedará pendiente`);
+                }
+            } catch (wsError) {
+                logger.error(`Error al enviar alerta push para movimiento: ${wsError.message}`);
+            }
 
             // Añadir la notificación al movimiento
             await Movement.updateOne(
@@ -1188,7 +1203,7 @@ async function sendCalendarBrowserAlerts({
             const formattedDate = `${day}/${month}/${year}`;
 
             // Crear la alerta en el modelo Alert
-            await Alert.create({
+            const newAlert = await Alert.create({
                 userId: userId,
                 folderId: event.folderId || mongoose.Types.ObjectId(), // Si no hay folderId, creamos uno temporal
                 avatarType: 'icon',
@@ -1199,6 +1214,21 @@ async function sendCalendarBrowserAlerts({
                 secondaryText: `${event.title} - ${formattedDate} ${timeText}`,
                 actionText: 'Ver evento'
             });
+            
+            // Intentar enviar la alerta por WebSocket si está disponible
+            try {
+                const websocketService = require('./websocket');
+                
+                if (websocketService.isUserConnected(userId)) {
+                    // Usuario conectado, enviar notificación push inmediatamente
+                    await websocketService.sendPushAlert(userId, newAlert);
+                    logger.debug(`Alerta push enviada al usuario ${userId} para evento ${event._id}`);
+                } else {
+                    logger.debug(`Usuario ${userId} no conectado, la alerta quedará pendiente`);
+                }
+            } catch (wsError) {
+                logger.error(`Error al enviar alerta push para evento: ${wsError.message}`);
+            }
 
             // Añadir la notificación al evento
             await Event.updateOne(
@@ -1845,7 +1875,7 @@ async function sendTaskBrowserAlerts({
             logger.debug(`Alerta de navegador para tarea ${task._id} (${task.name}) usando configuración de días: ${taskSpecificDays}`);
 
             // Crear la alerta en el modelo Alert
-            await Alert.create({
+            const newAlert = await Alert.create({
                 userId: userId,
                 folderId: task.folderId || new mongoose.Types.ObjectId(), // Si no hay folderId, creamos uno temporal
                 avatarType: 'icon',
@@ -1856,6 +1886,21 @@ async function sendTaskBrowserAlerts({
                 secondaryText: task.name,
                 actionText: 'Ver tarea'
             });
+            
+            // Intentar enviar la alerta por WebSocket si está disponible
+            try {
+                const websocketService = require('./websocket');
+                
+                if (websocketService.isUserConnected(userId)) {
+                    // Usuario conectado, enviar notificación push inmediatamente
+                    await websocketService.sendPushAlert(userId, newAlert);
+                    logger.debug(`Alerta push enviada al usuario ${userId} para tarea ${task._id}`);
+                } else {
+                    logger.debug(`Usuario ${userId} no conectado, la alerta quedará pendiente`);
+                }
+            } catch (wsError) {
+                logger.error(`Error al enviar alerta push para tarea: ${wsError.message}`);
+            }
 
             // Añadir la notificación a la tarea
             await Task.updateOne(
