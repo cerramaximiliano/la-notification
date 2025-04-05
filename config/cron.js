@@ -76,9 +76,9 @@ async function sendJobReport(jobType, result, error = null) {
  */
 function setupCronJobs() {
   // Obtener las expresiones cron de las variables de entorno o usar valores predeterminados
-  const calendarCron = process.env.NOTIFICATION_CALENDAR_CRON || '31 9 * * *'; // 9:23 AM todos los días
-  const taskCron = process.env.NOTIFICATION_TASK_CRON || '33 9 * * *';         // 9:25 AM todos los días
-  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '35 9 * * *'; // 9:27 AM todos los días
+  const calendarCron = process.env.NOTIFICATION_CALENDAR_CRON || '45 22 * * *'; // 9:23 AM todos los días
+  const taskCron = process.env.NOTIFICATION_TASK_CRON || '48 22 * * *';         // 9:25 AM todos los días
+  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '52 22 * * *'; // 9:27 AM todos los días
 
   // Validar las expresiones cron
   if (!cron.validate(calendarCron)) {
@@ -105,11 +105,11 @@ function setupCronJobs() {
       result = await calendarNotificationJob();
       logger.info('Trabajo de notificaciones de calendario completado');
       // Enviar informe de éxito
-      await sendJobReport('Calendario', result);
+      //await sendJobReport('Calendario', result);
     } catch (error) {
       logger.error(`Error en trabajo de notificaciones de calendario: ${error.message}`);
       // Enviar informe de error
-      await sendJobReport('Calendario', null, error);
+      //await sendJobReport('Calendario', null, error);
     }
   }, {
     scheduled: true,
@@ -124,11 +124,11 @@ function setupCronJobs() {
       result = await taskNotificationJob();
       logger.info('Trabajo de notificaciones de tareas completado');
       // Enviar informe de éxito
-      await sendJobReport('Tareas', result);
+      //await sendJobReport('Tareas', result);
     } catch (error) {
       logger.error(`Error en trabajo de notificaciones de tareas: ${error.message}`);
       // Enviar informe de error
-      await sendJobReport('Tareas', null, error);
+      //await sendJobReport('Tareas', null, error);
     }
   }, {
     scheduled: true,
@@ -143,11 +143,11 @@ function setupCronJobs() {
       result = await movementNotificationJob();
       logger.info('Trabajo de notificaciones de movimientos completado');
       // Enviar informe de éxito
-      await sendJobReport('Movimientos', result);
+      //await sendJobReport('Movimientos', result);
     } catch (error) {
       logger.error(`Error en trabajo de notificaciones de movimientos: ${error.message}`);
       // Enviar informe de error
-      await sendJobReport('Movimientos', null, error);
+      //await sendJobReport('Movimientos', null, error);
     }
   }, {
     scheduled: true,

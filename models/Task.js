@@ -1,263 +1,247 @@
-// task.model.js
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
-// Esquema para las notificaciones
-const NotificationSchema = new mongoose.Schema({
-  date: {
-    type: Date,
-    required: true,
-    default: Date.now
-  },
-  type: {
-    type: String,
-    required: true,
-    enum: ['email', 'push', 'sms', 'other']
-  },
-  success: {
+// Esquema para la configuración de notificaciones
+const NotificationSettingsSchema = new Schema({
+  // Por defecto, notificar solo una vez
+  notifyOnceOnly: {
     type: Boolean,
-    required: true,
     default: true
   },
-  details: {
-    type: String,
-    required: false
+  // Días de anticipación para la notificación
+  daysInAdvance: {
+    type: Number,
+    default: 5
   }
 }, { _id: false });
 
-const taskSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  progress: { type: Number },
-  done: { type: Number },
-  checked: { type: Boolean, required: true, default: false },
-  dueDate: { type: Date, required: true },
-  dueTime: { // Nuevo campo para almacenar la hora original si se necesita
+// Esquema para registrar notificaciones enviadas
+const NotificationRecordSchema = new Schema({
+  // Fecha en que se envió la notificación
+  date: {
+    type: Date,
+    default: Date.now
+  },
+  // Tipo de notificación (email, browser, mobile)
+  type: {
     type: String,
-    required: false
+    enum: ['email', 'browser', 'push', 'sms', 'other'],
+    required: true
   },
-  priority: { type: String, enum: ['baja', 'media', 'alta'], default: 'media' },
-  status: {
-    type: String,
-    enum: ['pendiente', 'en_progreso', 'revision', 'completada', 'cancelada'],
-    default: 'pendiente'
+  // Si la notificación se envió correctamente
+  success: {
+    type: Boolean,
+    default: true
   },
-  attachments: [{
-    name: { type: String },
-    url: { type: String },
-    type: { type: String }
-  }],
-  comments: [{
-    text: { type: String },
-    author: { type: String },
-    date: { type: Date, default: Date.now }
-  }],
-  folderId: { type: String },
-  userId: {
-    type: Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  groupId: {
-    type: Schema.Types.ObjectId,
-    ref: "Group",
-    required: false,
-  },
-  description: { type: String },
-  assignedTo: [{ type: String }], // Default se manejará en middleware
-  reminders: [{
-    date: { type: Date },
-    sent: { type: Boolean, default: false }
-  }],
-  subtasks: [{
-    name: { type: String },
-    completed: { type: Boolean, default: false }
-  }],
-  // Campos para el sistema de notificaciones
-  notifications: {
-    type: [NotificationSchema],
-    default: []
-  },
-  // Configuración de notificaciones
-  notificationSettings: {
-    // Por defecto, notificar solo una vez
-    notifyOnceOnly: {
-      type: Boolean,
-      default: true
-    },
-    // Días de anticipación para la notificación
-    daysInAdvance: {
-      type: Number,
-      default: 5
-    }
+  // Detalles adicionales sobre la notificación
+  details: {
+    type: String
   }
-},
-  { timestamps: true }
+}, { _id: false });
+
+const TaskSchema = new Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    description: {
+      type: String,
+      trim: true
+    },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true
+    },
+    folderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Folder',
+      index: true
+    },
+    status: {
+      type: String,
+      enum: ['pendiente', 'en_progreso', 'revision', 'completada', 'cancelada'],
+      default: 'pendiente',
+      index: true
+    },
+    priority: {
+      type: String,
+      enum: ['baja', 'media', 'alta'],
+      default: 'media',
+      index: true
+    },
+    dueDate: {
+      type: Date,
+      required: true,
+      index: true
+    },
+    dueTime: {
+      type: String,
+      validate: {
+        validator: function (v) {
+          return /^([01]\d|2[0-3]):([0-5]\d)$/.test(v);
+        },
+        message: props => `${props.value} no es un formato de hora válido (HH:MM)`
+      }
+    },
+    checked: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
+    // Nueva propiedad para controlar notificaciones del navegador
+    browserAlertSent: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
+    // Registros de notificaciones enviadas
+    notifications: {
+      type: [NotificationRecordSchema],
+      default: []
+    },
+
+    // Configuración de notificaciones específica para esta tarea
+    // (si no está presente, se usa la configuración global del usuario)
+    notificationSettings: {
+      type: NotificationSettingsSchema
+    }
+  },
+  {
+    timestamps: true
+  }
 );
 
-// Middleware para normalizar dueDate a las 00:00:00 UTC del día especificado
-taskSchema.pre('save', function (next) {
-  if (this.isModified('dueDate')) {
-    // Guardar la hora original en el campo dueTime (opcional)
-    const originalDate = new Date(this.dueDate);
-    const hours = originalDate.getUTCHours().toString().padStart(2, '0');
-    const minutes = originalDate.getUTCMinutes().toString().padStart(2, '0');
-    this.dueTime = `${hours}:${minutes}`;
+// Índices para mejorar el rendimiento de búsquedas comunes
+TaskSchema.index({ userId: 1, status: 1, dueDate: 1 });
+TaskSchema.index({ userId: 1, browserAlertSent: 1 });
+TaskSchema.index({ "notifications.date": 1, "notifications.type": 1 });
 
-    // Normalizar dueDate a las 00:00:00 UTC
-    const normalizedDate = new Date(this.dueDate);
-    normalizedDate.setUTCHours(0, 0, 0, 0);
-    this.dueDate = normalizedDate;
+// Métodos helper para trabajar con notificaciones
+TaskSchema.methods.shouldSendBrowserAlert = function (userExpirationSettings) {
+  // Si ya se envió una alerta del navegador y está configurado para notificar solo una vez
+  if (this.browserAlertSent &&
+    (this.notificationSettings?.notifyOnceOnly ||
+      (!this.notificationSettings && userExpirationSettings?.notifyOnceOnly))) {
+    return false;
   }
 
-  // Continuar con el resto de los middlewares
-  next();
-});
+  // Verificar si ya se envió una notificación hoy
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
 
-// El resto de los middlewares debe venir después para evitar interferencias
-// Middleware para document.save() - asignación y sincronización de estados
-taskSchema.pre('save', function (next) {
-  // Si es un documento nuevo y no tiene elementos asignados
-  if (this.isNew && (!this.assignedTo || this.assignedTo.length === 0)) {
-    // Asignar el userId como primer elemento del array assignedTo
-    this.assignedTo = [this.userId];
+  const sentToday = this.notifications.some(n =>
+    n.type === 'browser' &&
+    n.date >= today &&
+    n.date < tomorrow
+  );
+
+  return !sentToday;
+};
+
+// Método para marcar una tarea como notificada por navegador
+TaskSchema.methods.markBrowserAlertSent = function () {
+  this.browserAlertSent = true;
+  this.notifications.push({
+    date: new Date(),
+    type: 'browser',
+    success: true,
+    details: 'Alerta creada en el navegador'
+  });
+  return this;
+};
+
+// Método para determinar si una tarea está vencida
+TaskSchema.methods.isOverdue = function () {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueDate = new Date(this.dueDate);
+  dueDate.setHours(0, 0, 0, 0);
+
+  return dueDate < today;
+};
+
+// Método para calcular días hasta el vencimiento
+TaskSchema.methods.daysUntilDue = function () {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueDate = new Date(this.dueDate);
+  dueDate.setHours(0, 0, 0, 0);
+
+  const diffTime = dueDate - today;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+  return diffDays;
+};
+
+// Método para obtener el estado de la tarea
+TaskSchema.methods.getStatusInfo = function () {
+  const diffDays = this.daysUntilDue();
+
+  if (diffDays < 0) {
+    return {
+      severity: 'error',
+      message: 'Vencida',
+      icon: 'warning'
+    };
+  } else if (diffDays === 0) {
+    return {
+      severity: 'warning',
+      message: 'Vence hoy',
+      icon: 'clock'
+    };
+  } else if (diffDays === 1) {
+    return {
+      severity: 'warning',
+      message: 'Vence mañana',
+      icon: 'clock'
+    };
+  } else if (diffDays <= 3) {
+    return {
+      severity: 'warning',
+      message: `En ${diffDays} días`,
+      icon: 'calendar'
+    };
+  } else {
+    return {
+      severity: 'info',
+      message: `En ${diffDays} días`,
+      icon: 'calendar'
+    };
+  }
+};
+
+// Método para formatear la fecha de vencimiento
+TaskSchema.methods.getFormattedDueDate = function (format = 'DD/MM/YYYY') {
+  const dueDate = new Date(this.dueDate);
+
+  // Formato de fecha: DD/MM/YYYY
+  const day = dueDate.getDate().toString().padStart(2, '0');
+  const month = (dueDate.getMonth() + 1).toString().padStart(2, '0');
+  const year = dueDate.getFullYear();
+
+  let result = format;
+  result = result.replace('DD', day);
+  result = result.replace('MM', month);
+  result = result.replace('YYYY', year);
+
+  // Agregar hora si existe
+  if (this.dueTime) {
+    const [hours, minutes] = this.dueTime.split(':');
+    const hour12 = (parseInt(hours) % 12) || 12;
+    const ampm = parseInt(hours) >= 12 ? 'p.m.' : 'a.m.';
+    result += ` ${hour12}:${minutes} ${ampm}`;
   }
 
-  // Sincronizar status y checked
-  if (this.status === 'completada' || this.status === 'cancelada') {
-    this.checked = true;
-  } else if (this.isModified('status')) {
-    this.checked = false;
-  }
+  return result;
+};
 
-  // Si checked cambia a true y status no está en un estado final
-  if (this.isModified('checked') && this.checked === true &&
-    this.status !== 'completada' && this.status !== 'cancelada') {
-    this.status = 'completada';
-  }
-
-  next();
-});
-
-// Middleware para findOneAndUpdate - también normalizamos dueDate
-taskSchema.pre('findOneAndUpdate', function (next) {
-  const update = this.getUpdate();
-
-  // Normalizar dueDate si se está actualizando
-  if (update.dueDate || (update.$set && update.$set.dueDate)) {
-    const dueDate = update.dueDate || update.$set.dueDate;
-    const originalDate = new Date(dueDate);
-
-    // Guardar hora original
-    const hours = originalDate.getUTCHours().toString().padStart(2, '0');
-    const minutes = originalDate.getUTCMinutes().toString().padStart(2, '0');
-    const dueTime = `${hours}:${minutes}`;
-
-    // Normalizar a 00:00:00 UTC
-    const normalizedDate = new Date(dueDate);
-    normalizedDate.setUTCHours(0, 0, 0, 0);
-
-    // Actualizar los campos
-    if (update.dueDate) {
-      update.dueDate = normalizedDate;
-      update.dueTime = dueTime;
-    } else if (update.$set) {
-      update.$set.dueDate = normalizedDate;
-      update.$set.dueTime = dueTime;
-    }
-  }
-
-  // Continuar con el resto de la lógica de actualización
-  if (update.status === 'completada' || update.status === 'cancelada') {
-    this.updateOne({ $set: { checked: true } });
-  }
-  else if (update.status && update.status !== 'completada' && update.status !== 'cancelada') {
-    this.updateOne({ $set: { checked: false } });
-  }
-
-  if (update.checked === true) {
-    if (!update.status) {
-      this.updateOne({ $set: { status: 'completada' } });
-    }
-  }
-
-  next();
-});
-
-// Adaptamos updateOne y updateMany para manejar la normalización de dueDate
-taskSchema.pre('updateOne', function (next) {
-  const update = this.getUpdate();
-
-  // Normalizar dueDate si se está actualizando
-  if (update.$set && update.$set.dueDate) {
-    const originalDate = new Date(update.$set.dueDate);
-
-    // Guardar hora original
-    const hours = originalDate.getUTCHours().toString().padStart(2, '0');
-    const minutes = originalDate.getUTCMinutes().toString().padStart(2, '0');
-    update.$set.dueTime = `${hours}:${minutes}`;
-
-    // Normalizar a 00:00:00 UTC
-    const normalizedDate = new Date(update.$set.dueDate);
-    normalizedDate.setUTCHours(0, 0, 0, 0);
-    update.$set.dueDate = normalizedDate;
-  }
-
-  // Resto de la lógica existente
-  if (update.$set) {
-    if (update.$set.status === 'completada' || update.$set.status === 'cancelada') {
-      update.$set.checked = true;
-    } else if (update.$set.status) {
-      update.$set.checked = false;
-    }
-
-    if (update.$set.checked === true && !update.$set.status) {
-      update.$set.status = 'completada';
-    }
-  }
-
-  next();
-});
-
-// Middleware para updateMany
-taskSchema.pre('updateMany', function (next) {
-  const update = this.getUpdate();
-
-  // Normalizar dueDate si se está actualizando
-  if (update.$set && update.$set.dueDate) {
-    const originalDate = new Date(update.$set.dueDate);
-
-    // Guardar hora original
-    const hours = originalDate.getUTCHours().toString().padStart(2, '0');
-    const minutes = originalDate.getUTCMinutes().toString().padStart(2, '0');
-    update.$set.dueTime = `${hours}:${minutes}`;
-
-    // Normalizar a 00:00:00 UTC
-    const normalizedDate = new Date(update.$set.dueDate);
-    normalizedDate.setUTCHours(0, 0, 0, 0);
-    update.$set.dueDate = normalizedDate;
-  }
-
-  // Resto de la lógica existente
-  if (update.$set) {
-    if (update.$set.status === 'completada' || update.$set.status === 'cancelada') {
-      update.$set.checked = true;
-    } else if (update.$set.status) {
-      update.$set.checked = false;
-    }
-
-    if (update.$set.checked === true && !update.$set.status) {
-      update.$set.status = 'completada';
-    }
-  }
-
-  next();
-});
-
-// Índices para mejorar el rendimiento de las consultas
-taskSchema.index({ userId: 1, dueDate: 1 });
-taskSchema.index({ status: 1 });
-taskSchema.index({ "notifications.date": 1, "notifications.type": 1 });
-
-const Task = mongoose.model("Task", taskSchema);
-
+const Task = mongoose.model("Task", TaskSchema);
 module.exports = Task;
