@@ -76,9 +76,9 @@ async function sendJobReport(jobType, result, error = null) {
  */
 function setupCronJobs() {
   // Obtener las expresiones cron de las variables de entorno o usar valores predeterminados
-  const calendarCron = process.env.NOTIFICATION_CALENDAR_CRON || '45 22 * * *'; // 9:23 AM todos los días
-  const taskCron = process.env.NOTIFICATION_TASK_CRON || '48 22 * * *';         // 9:25 AM todos los días
-  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '52 22 * * *'; // 9:27 AM todos los días
+  const calendarCron = process.env.NOTIFICATION_CALENDAR_CRON || '0 9 * * *';
+  const taskCron = process.env.NOTIFICATION_TASK_CRON || '15 9 * * *';
+  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '30 9 * * *';
 
   // Validar las expresiones cron
   if (!cron.validate(calendarCron)) {
