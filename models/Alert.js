@@ -26,7 +26,7 @@ const AlertSchema = new mongoose.Schema(
         },
         avatarIcon: {
             type: String,
-            enum: ["Gift", "MessageText1", "Setting2"],
+            enum: ["Gift", "MessageText1", "Setting2", "TableDocument", "TaskSquare", "CalendarRemove"],
             required: false,
         },
         avatarSize: {
@@ -37,17 +37,25 @@ const AlertSchema = new mongoose.Schema(
             type: String,
             required: false,
         },
+        // Mantenemos estos campos por compatibilidad con versiones anteriores
+        // pero ya no son obligatorios
         primaryText: {
             type: String,
-            required: true,
+            required: false, // Cambiado de true a false
         },
         primaryVariant: {
             type: String,
-            required: true,
+            required: false, // Cambiado de true a false
         },
         secondaryText: {
             type: String,
             required: true,
+        },
+        // Nuevo campo para almacenar la fecha de expiración
+        expirationDate: {
+            type: Date,
+            required: false, // No obligatorio para mantener compatibilidad con alertas antiguas
+            index: true      // Indexado para consultas eficientes
         },
         actionText: {
             type: String,
@@ -78,6 +86,9 @@ const AlertSchema = new mongoose.Schema(
 
 // Índice compuesto para consultas frecuentes de alertas pendientes
 AlertSchema.index({ userId: 1, delivered: 1, createdAt: -1 });
+
+// Nuevo índice para consultas basadas en fechas de expiración
+AlertSchema.index({ userId: 1, expirationDate: 1, read: 1 });
 
 const Alert = mongoose.model("Alert", AlertSchema);
 module.exports = Alert;

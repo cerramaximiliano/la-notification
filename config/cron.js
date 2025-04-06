@@ -26,7 +26,7 @@ function setupCronJobs() {
   // Obtener las expresiones cron de las variables de entorno o usar valores predeterminados
   const calendarCron = process.env.NOTIFICATION_CALENDAR_CRON || '0 9 * * *';
   const taskCron = process.env.NOTIFICATION_TASK_CRON || '15 9 * * *';
-  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '30 9 * * *';
+  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '45 9 * * *';
 
   // Validar las expresiones cron
   if (!cron.validate(calendarCron)) {
