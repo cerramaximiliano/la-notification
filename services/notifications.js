@@ -1444,34 +1444,35 @@ async function sendJudicialMovementNotifications({
         logger.info(`Actualizando ${notifiedMovementIds.length} movimientos judiciales a estado: ${emailStatus}`);
         
         try {
-            // Actualizar estado y agregar notificación para cada movimiento
+            // Actualizar estado primero sin notificaciones
+            const statusUpdate = await JudicialMovement.updateMany(
+                { _id: { $in: notifiedMovementIds } },
+                { $set: { notificationStatus: emailStatus } }
+            );
+            
+            logger.info(`Estado actualizado para ${statusUpdate.modifiedCount} movimientos`);
+            
+            // Luego agregar notificaciones individualmente
             for (const movementId of notifiedMovementIds) {
-                const updateResult = await JudicialMovement.findByIdAndUpdate(
-                    movementId,
-                    {
-                        $set: { 
-                            notificationStatus: emailStatus 
-                        },
-                        $push: { 
-                            notifications: {
-                                date: notificationDetails.date,
-                                type: notificationDetails.type,
-                                success: notificationDetails.success,
-                                details: notificationDetails.details
-                            }
-                        }
-                    },
-                    { new: true }
-                );
-                
-                if (updateResult) {
-                    logger.info(`Movimiento ${movementId} actualizado exitosamente a estado: ${emailStatus}`);
-                } else {
-                    logger.error(`No se pudo actualizar el movimiento ${movementId}`);
+                try {
+                    const movement = await JudicialMovement.findById(movementId);
+                    if (movement) {
+                        movement.notifications = movement.notifications || [];
+                        movement.notifications.push({
+                            date: new Date(),
+                            type: 'email',
+                            success: emailStatus === 'sent',
+                            details: notificationDetails.details
+                        });
+                        await movement.save();
+                        logger.info(`Notificación agregada a movimiento ${movementId}`);
+                    }
+                } catch (err) {
+                    logger.error(`Error agregando notificación a ${movementId}:`, err.message);
                 }
             }
             
-            logger.info(`Todos los movimientos procesados`);
+            logger.info(`Proceso de actualización completado`);
         } catch (updateError) {
             logger.error(`Error actualizando movimientos judiciales:`, updateError);
         }
