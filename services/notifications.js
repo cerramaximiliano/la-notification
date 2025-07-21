@@ -1388,7 +1388,10 @@ async function sendJudicialMovementNotifications({
                   <tr>
                     <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${fecha}</td>
                     <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${movement.movimiento.tipo}</td>
-                    <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${movement.movimiento.detalle}</td>
+                    <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">
+                      ${movement.movimiento.detalle}
+                      ${movement.movimiento.url ? `<br><a href="${movement.movimiento.url}" style="color: #2563eb; font-size: 12px; text-decoration: none;">Ver documento</a>` : ''}
+                    </td>
                   </tr>
                 `;
 
@@ -1436,7 +1439,8 @@ async function sendJudicialMovementNotifications({
         };
 
         // Actualizar movimientos notificados
-        await JudicialMovement.updateMany(
+        logger.info(`Actualizando ${notifiedMovementIds.length} movimientos judiciales a estado: ${emailStatus}`);
+        const updateResult = await JudicialMovement.updateMany(
             { _id: { $in: notifiedMovementIds } },
             {
                 $set: { 
@@ -1447,6 +1451,7 @@ async function sendJudicialMovementNotifications({
                 }
             }
         );
+        logger.info(`Resultado actualización: ${updateResult.modifiedCount} de ${updateResult.matchedCount} documentos actualizados`);
 
         // Registrar en NotificationLog
         for (const movement of pendingMovements) {
