@@ -967,7 +967,7 @@ async function judicialMovementNotificationJob() {
     const thirtyDaysAgo = moment().subtract(30, 'days').toDate();
     const cleanupResult = await JudicialMovement.deleteMany({
       notificationStatus: 'sent',
-      'movimiento.fecha': { $lt: thirtyDaysAgo }
+      updatedAt: { $lt: thirtyDaysAgo }  // Usar fecha de actualización, no fecha del movimiento
     });
 
     logger.info(`Trabajo de notificaciones de movimientos judiciales completado:`);

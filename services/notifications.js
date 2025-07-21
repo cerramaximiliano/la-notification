@@ -1468,7 +1468,8 @@ async function sendJudicialMovementNotifications({
                         logger.info(`Notificación agregada a movimiento ${movementId}`);
                     }
                 } catch (err) {
-                    logger.error(`Error agregando notificación a ${movementId}:`, err.message);
+                    logger.error(`Error agregando notificación a ${movementId}: ${err.message || err}`);
+                    logger.error(`Stack trace:`, err.stack);
                 }
             }
             
