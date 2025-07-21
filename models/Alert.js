@@ -17,7 +17,21 @@ const AlertSchema = new mongoose.Schema(
         folderId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Folder',
+            required: false, // Cambiado a opcional
+            index: true
+        },
+        // Tipo de origen de la alerta
+        sourceType: {
+            type: String,
+            enum: ['event', 'task', 'movement', 'system', 'marketing', 'custom'],
             required: true,
+            default: 'system',
+            index: true
+        },
+        // ID de la entidad relacionada (si aplica)
+        sourceId: {
+            type: mongoose.Schema.Types.ObjectId,
+            required: false,
             index: true
         },
         avatarType: {

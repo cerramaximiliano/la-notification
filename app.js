@@ -5,6 +5,7 @@ const fs = require('fs/promises');
 const logger = require("./config/logger");
 const http = require('http');
 const socketIO = require('socket.io');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const PORT = process.env.PORT_NOTIFICATIONS || 3004;
@@ -17,8 +18,30 @@ const io = socketIO(server, {
     }
 });
 
+// Configurar CORS
+app.use((req, res, next) => {
+    const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['*'];
+    const origin = req.headers.origin;
+    
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin || '*');
+    }
+    
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    
+    next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
 
 app.use((req, res, next) => {
     logger.info(`${req.method} ${req.url}`);
@@ -38,8 +61,26 @@ const initializeApp = async () => {
         dotenv.config();
 
         const connectDB = require("./config/db");
-        connectDB();
+        await connectDB();
+        
+        // Cargar todos los modelos después de conectar a la DB
+        require('./models');
 
+        // Configurar rutas de monitoreo
+        const monitoringRoutes = require('./routes/monitoring');
+        app.use('/api/monitoring', monitoringRoutes);
+        
+        // Configurar rutas de alertas
+        const alertRoutes = require('./routes/alerts');
+        app.use('/api/alerts', alertRoutes);
+        
+        // Configurar rutas de movimientos judiciales
+        const judicialMovementRoutes = require('./routes/judicialMovements');
+        app.use('/api/judicial-movements', judicialMovementRoutes);
+
+        // Exportar io globalmente antes de configurar WebSocket
+        global.io = io;
+        
         // Configurar el WebSocket en un módulo separado
         const websocketService = require('./services/websocket');
         websocketService.setupWebSocket(io);
@@ -59,9 +100,6 @@ const initializeApp = async () => {
 };
 
 const mongoose = require('mongoose');
-
-// Exportar io para usarlo en otros módulos
-global.io = io;
 
 // Proceso para mantener la aplicación viva
 setInterval(() => {

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Alert Test Client</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .alert-box {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+        }
+        .log {
+            background-color: #f4f4f4;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Alert Test Client</h1>
+    
+    <div id="status" class="status disconnected">Disconnected</div>
+    
+    <div>
+        <h3>Configuration</h3>
+        <label>User ID: <input type="text" id="userId" value="5f1f10d45b860e5a18acb7a2" /></label><br>
+        <label>JWT Token: <input type="text" id="token" placeholder="Paste your JWT token here" /></label><br>
+        <button onclick="connect()">Connect</button>
+        <button onclick="disconnect()">Disconnect</button>
+    </div>
+    
+    <div>
+        <h3>Actions</h3>
+        <button onclick="createAlert()">Create Test Alert</button>
+        <button onclick="clearLogs()">Clear Logs</button>
+    </div>
+    
+    <h3>Received Alerts</h3>
+    <div id="alerts"></div>
+    
+    <h3>Connection Log</h3>
+    <div id="log" class="log"></div>
+
+    <script>
+        let socket = null;
+        const WS_URL = 'http://localhost:3004';
+        const API_URL = 'http://localhost:3004';
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? 'red' : type === 'success' ? 'green' : 'black';
+            logDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${connected ? 'connected' : 'disconnected'}`;
+            statusDiv.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+        
+        function displayAlert(alert) {
+            const alertsDiv = document.getElementById('alerts');
+            const alertBox = document.createElement('div');
+            alertBox.className = 'alert-box';
+            alertBox.innerHTML = `
+                <strong>${alert.primaryText || 'Alert'}</strong><br>
+                ${alert.secondaryText}<br>
+                <small>Type: ${alert.sourceType} | ID: ${alert._id}</small><br>
+                <button onclick="this.parentElement.remove()">Dismiss</button>
+            `;
+            alertsDiv.prepend(alertBox);
+        }
+        
+        function connect() {
+            const userId = document.getElementById('userId').value;
+            const token = document.getElementById('token').value;
+            
+            if (!userId) {
+                alert('Please enter a User ID');
+                return;
+            }
+            
+            log('Connecting to WebSocket server...');
+            
+            socket = io(WS_URL, {
+                auth: token ? { token } : undefined,
+                transports: ['websocket', 'polling']
+            });
+            
+            socket.on('connect', () => {
+                log('Connected to server', 'success');
+                updateStatus(true);
+                
+                // Authenticate
+                log(`Authenticating as user: ${userId}`);
+                socket.emit('authenticate', userId);
+            });
+            
+            socket.on('authenticated', (data) => {
+                log('Authentication successful', 'success');
+            });
+            
+            socket.on('authentication_error', (error) => {
+                log(`Authentication error: ${error}`, 'error');
+            });
+            
+            socket.on('new_alert', (alert) => {
+                log('New alert received!', 'success');
+                displayAlert(alert);
+            });
+            
+            socket.on('pending_alerts', (alerts) => {
+                log(`Received ${alerts.length} pending alerts`, 'success');
+                alerts.forEach(alert => displayAlert(alert));
+            });
+            
+            socket.on('disconnect', (reason) => {
+                log(`Disconnected: ${reason}`, 'error');
+                updateStatus(false);
+            });
+            
+            socket.on('error', (error) => {
+                log(`Socket error: ${error}`, 'error');
+            });
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                log('Manually disconnected');
+            }
+        }
+        
+        async function createAlert() {
+            const userId = document.getElementById('userId').value;
+            const token = document.getElementById('token').value;
+            
+            if (!userId) {
+                alert('Please enter a User ID');
+                return;
+            }
+            
+            log('Creating test alert...');
+            
+            try {
+                const response = await fetch(`${API_URL}/api/alerts/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Cookie': token ? `authToken=${token}` : undefined
+                    },
+                    body: JSON.stringify({
+                        userIds: [userId],
+                        alert: {
+                            sourceType: 'system',
+                            avatarType: 'icon',
+                            avatarIcon: 'MessageText1',
+                            avatarSize: 40,
+                            primaryText: 'Test Alert',
+                            primaryVariant: 'info',
+                            secondaryText: `Test alert created at ${new Date().toLocaleTimeString()}`,
+                            actionText: 'Dismiss',
+                            deliverImmediately: true
+                        }
+                    })
+                });
+                
+                const data = await response.json();
+                log(`Alert API response: ${JSON.stringify(data)}`, response.ok ? 'success' : 'error');
+                
+            } catch (error) {
+                log(`Error creating alert: ${error.message}`, 'error');
+            }
+        }
+        
+        function clearLogs() {
+            document.getElementById('log').innerHTML = '';
+            document.getElementById('alerts').innerHTML = '';
+        }
+        
+        // Auto-connect on load if userId is present
+        window.onload = () => {
+            const userId = document.getElementById('userId').value;
+            if (userId) {
+                log('Ready to connect. Click "Connect" to start.');
+            }
+        };
+    </script>
+</body>
+</html>

@@ -3,7 +3,8 @@ const {
   calendarNotificationJob,
   taskNotificationJob,
   movementNotificationJob,
-  clearLogsJob
+  clearLogsJob,
+  judicialMovementNotificationJob
 } = require('../cron/notificationJobs');
 const { sendEmail } = require('../services/email');
 const logger = require('./logger');
@@ -109,6 +110,28 @@ function setupCronJobs() {
     scheduled: true,
     timezone: 'America/Argentina/Buenos_Aires'
   });
+
+  // Trabajo para notificaciones de movimientos judiciales
+  // Se ejecuta cada hora para procesar movimientos pendientes
+  const judicialMovementCron = process.env.NOTIFICATION_JUDICIAL_MOVEMENT_CRON || '0 * * * *';
+  
+  if (!cron.validate(judicialMovementCron)) {
+    logger.error(`Expresión cron inválida para notificaciones de movimientos judiciales: ${judicialMovementCron}`);
+  } else {
+    logger.info(`Configurando notificaciones de movimientos judiciales: ${judicialMovementCron}`);
+    cron.schedule(judicialMovementCron, async () => {
+      logger.info('Ejecutando trabajo de notificaciones de movimientos judiciales');
+      try {
+        await judicialMovementNotificationJob();
+        logger.info('Trabajo de notificaciones de movimientos judiciales completado');
+      } catch (error) {
+        logger.error(`Error en trabajo de notificaciones judiciales: ${error.message}`);
+      }
+    }, {
+      scheduled: true,
+      timezone: 'America/Argentina/Buenos_Aires'
+    });
+  }
 }
 
 module.exports = { setupCronJobs };

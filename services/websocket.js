@@ -1,13 +1,40 @@
 const logger = require('../config/logger');
+const jwt = require('jsonwebtoken');
 
 // Almacena las conexiones de usuarios activos
 const connectedUsers = new Map();
+
+// Helper function to extract token from cookies
+function extractTokenFromCookies(socket) {
+    const cookieHeader = socket.handshake.headers.cookie;
+    if (!cookieHeader) return null;
+    
+    const cookies = {};
+    cookieHeader.split(';').forEach(cookie => {
+        const parts = cookie.trim().split('=');
+        if (parts.length === 2) {
+            cookies[parts[0]] = parts[1];
+        }
+    });
+    
+    // Try different cookie names
+    const TOKEN_COOKIE_NAMES = ['authToken', 'auth_token', 'auth_token_temp', 'token', 'access_token', 'jwt', 'session'];
+    for (const cookieName of TOKEN_COOKIE_NAMES) {
+        if (cookies[cookieName]) {
+            return cookies[cookieName];
+        }
+    }
+    
+    return null;
+}
 
 /**
  * Configura el servidor WebSocket
  * @param {Object} io - Instancia de socket.io
  */
 function setupWebSocket(io) {
+    // La instancia de io ya está guardada globalmente en app.js
+    
     io.on('connection', (socket) => {
         logger.info(`Nueva conexión WebSocket: ${socket.id}`);
 
@@ -26,8 +53,8 @@ function setupWebSocket(io) {
 
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-                // Verificar que userId coincida
-                if (decoded.userId !== userId) {
+                // Verificar que userId coincida (el token usa 'id' no 'userId')
+                if (decoded.id !== userId) {
                     socket.emit('authentication_error', 'Usuario no autorizado');
                     return;
                 }

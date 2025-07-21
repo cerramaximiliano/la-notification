@@ -15,7 +15,7 @@ const NotificationSettingsSchema = new Schema({
   }
 }, { _id: false });
 
-// Esquema para registrar notificaciones enviadas
+// Esquema para registrar notificaciones enviadas>
 const NotificationRecordSchema = new Schema({
   // Fecha en que se envió la notificación
   date: {
@@ -36,6 +36,12 @@ const NotificationRecordSchema = new Schema({
   // Detalles adicionales sobre la notificación
   details: {
     type: String
+  },
+  // ID único para prevenir duplicados
+  notificationId: {
+    type: String,
+    required: false,
+    sparse: true
   }
 }, { _id: false });
 
@@ -121,6 +127,17 @@ const TaskSchema = new Schema(
 TaskSchema.index({ userId: 1, status: 1, dueDate: 1 });
 TaskSchema.index({ userId: 1, browserAlertSent: 1 });
 TaskSchema.index({ "notifications.date": 1, "notifications.type": 1 });
+
+// Índice único compuesto para prevenir notificaciones duplicadas
+TaskSchema.index({ 
+  _id: 1, 
+  "notifications.notificationId": 1 
+}, { 
+  unique: true,
+  sparse: true,
+  background: true,
+  partialFilterExpression: { "notifications.notificationId": { $exists: true } }
+});
 
 // Métodos helper para trabajar con notificaciones
 TaskSchema.methods.shouldSendBrowserAlert = function (userExpirationSettings) {

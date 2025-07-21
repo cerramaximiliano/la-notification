@@ -24,6 +24,11 @@ const NotificationSchema = new Schema({
   details: {
     type: String,
     required: false
+  },
+  notificationId: {
+    type: String,
+    required: false,
+    sparse: true // Permite valores null pero garantiza unicidad cuando existe
   }
 }, { _id: false });
 
@@ -107,6 +112,17 @@ const EventSchema = new Schema(
 EventSchema.index({ userId: 1, start: 1 });
 EventSchema.index({ browserAlertSent: 1, start: 1 });
 EventSchema.index({ "notifications.date": 1, "notifications.type": 1 });
+
+// Índice único compuesto para prevenir notificaciones duplicadas
+EventSchema.index({ 
+  _id: 1, 
+  "notifications.notificationId": 1 
+}, { 
+  unique: true,
+  sparse: true,
+  background: true,
+  partialFilterExpression: { "notifications.notificationId": { $exists: true } }
+});
 
 // Métodos helper para trabajar con notificaciones
 EventSchema.methods.shouldSendBrowserAlert = function(userCalendarSettings) {

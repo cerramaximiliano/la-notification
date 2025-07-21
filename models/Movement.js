@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 
 // Esquema para las notificaciones
 const NotificationSchema = new mongoose.Schema({
+  notificationId: {
+    type: String,
+    required: false,  // Opcional para retrocompatibilidad
+    sparse: true
+  },
   date: {
     type: Date,
     required: true,
@@ -44,7 +49,7 @@ const MovementSchema = new mongoose.Schema(
       index: true
     },
     time: {
-      type: String,
+      type: Date,
       required: true
     },
     dateExpiration: {
@@ -133,9 +138,18 @@ MovementSchema.methods.shouldSendBrowserAlert = function(userExpirationSettings)
 
 // Método para marcar un movimiento como notificado por navegador
 MovementSchema.methods.markBrowserAlertSent = function() {
+  const crypto = require('crypto');
+  const now = new Date();
+  
+  // Generar ID único para la notificación
+  const notificationId = crypto.createHash('md5')
+    .update(`${this.userId}-${this._id}-browser-${now.getTime()}`)
+    .digest('hex');
+  
   this.browserAlertSent = true;
   this.notifications.push({
-    date: new Date(),
+    notificationId: notificationId,
+    date: now,
     type: 'browser',
     success: true,
     details: 'Alerta creada en el navegador'

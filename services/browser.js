@@ -209,7 +209,7 @@ async function sendBrowserAlerts({
             };
         }
 
-        const userObjectId = mongoose.Types.ObjectId(userId.toString());
+        const userObjectId = new mongoose.Types.ObjectId(userId.toString());
 
         // Buscar usuario
         const user = await models.User.findById(userObjectId);
@@ -337,61 +337,64 @@ async function sendBrowserAlerts({
             }
         );
 
-        // Inicializar array de notificaciones
-        await ItemModel.updateMany(
-            {
-                _id: { $in: upcomingItems.map(item => item._id) },
-                notifications: { $exists: false }
-            },
-            { $set: { notifications: [] } }
-        );
-
-        // Crear alertas para cada elemento
-        const alertPromises = upcomingItems.map(async (item) => {
-            // Obtener datos de la alerta con expirationDate estandarizada
-            const alertData = helpers.getAlertData(
-                item,
-                type,
-                dateField,
-                today,
-                moment
-            );
-
-            // Crear alerta
-            const newAlert = await models.Alert.create({
-                userId: userId,
-                folderId: item.folderId || new mongoose.Types.ObjectId(),
-                ...alertData
-            });
-
-            // Intentar enviar por WebSocket
+        // Importar helper para operaciones atómicas
+        const { addNotificationsSequential } = require('./notificationHelper');
+        
+        // Procesar alertas secuencialmente para evitar condiciones de carrera
+        const processedItems = [];
+        const websocketService = require('./websocket');
+        
+        for (const item of upcomingItems) {
             try {
-                const websocketService = require('./websocket');
+                // Obtener datos de la alerta con expirationDate estandarizada
+                const alertData = helpers.getAlertData(
+                    item,
+                    type,
+                    dateField,
+                    today,
+                    moment
+                );
 
-                if (websocketService.isUserConnected(userId)) {
-                    await websocketService.sendPushAlert(userId, newAlert);
-                    logger.info(`Alerta push enviada al usuario ${userId} para ${type} ${item._id}`);
-                } else {
-                    logger.info(`Usuario ${userId} no conectado, la alerta quedará pendiente`);
+                // Crear alerta
+                const newAlert = await models.Alert.create({
+                    userId: userId,
+                    folderId: item.folderId, // Ahora es opcional
+                    sourceType: type, // 'event', 'task', o 'movement'
+                    sourceId: item._id, // ID del item original
+                    ...alertData
+                });
+
+                // Intentar enviar por WebSocket
+                try {
+                    if (websocketService.isUserConnected(userId)) {
+                        await websocketService.sendPushAlert(userId, newAlert);
+                        logger.info(`Alerta push enviada al usuario ${userId} para ${type} ${item._id}`);
+                    } else {
+                        logger.info(`Usuario ${userId} no conectado, la alerta quedará pendiente`);
+                    }
+                } catch (wsError) {
+                    logger.error(`Error al enviar alerta push para ${type}: ${wsError.message}`);
                 }
-            } catch (wsError) {
-                logger.error(`Error al enviar alerta push para ${type}: ${wsError.message}`);
+
+                processedItems.push(item);
+                
+            } catch (error) {
+                logger.error(`Error procesando alerta para ${type} ${item._id}:`, error);
             }
-
-            // Actualizar el elemento
-            await ItemModel.updateOne(
-                { _id: item._id },
-                {
-                    $push: { notifications: notificationDetails },
-                    $set: { browserAlertSent: true }
-                }
-            );
-
-            return item._id;
-        });
-
-        // Esperar a que se creen todas las alertas
-        const itemIds = await Promise.all(alertPromises);
+        }
+        
+        // Usar operación atómica para agregar notificaciones sin duplicados
+        const notificationResult = await addNotificationsSequential(
+            ItemModel,
+            processedItems,
+            notificationDetails,
+            {
+                windowSeconds: 5,
+                userSettings: userSettings
+            }
+        );
+        
+        logger.info(`Notificaciones de browser agregadas: ${notificationResult.successful}/${notificationResult.total}, omitidas: ${notificationResult.skipped}, errores: ${notificationResult.failed}`);
 
         logger.info(`Alertas de navegador creadas para el usuario ${user.email} para ${upcomingItems.length} ${type}s`);
 
@@ -402,7 +405,7 @@ async function sendBrowserAlerts({
             count: upcomingItems.length,
             notified: true,
             userId: userId,
-            [`${type}Ids`]: itemIds,
+            [`${type}Ids`]: processedItems.map(item => item._id),
             forceDaily: forceDaily,
             daysInAdvance: globalDaysInAdvance
         };

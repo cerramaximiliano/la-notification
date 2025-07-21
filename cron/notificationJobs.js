@@ -7,6 +7,7 @@ const {
   sendCalendarNotifications,
   sendTaskNotifications,
   sendMovementNotifications,
+  sendJudicialMovementNotifications,
 } = require('../services/notifications');
 
 
@@ -17,6 +18,8 @@ const Event = require('../models/Event');
 const Task = require('../models/Task');
 const Movement = require('../models/Movement');
 const Alert = require("../models/Alert");
+const JudicialMovement = require('../models/JudicialMovement');
+const NotificationLog = require('../models/NotificationLog');
 const logger = require('../config/logger');
 const { sendTaskBrowserAlerts, sendMovementBrowserAlerts, sendCalendarBrowserAlerts } = require('../services/browser');
 
@@ -303,7 +306,7 @@ async function taskNotificationJob() {
               forceDaily: false,
               userId: user._id,
               models: { User, Task, Alert },
-              utilities: { logger }
+              utilities: { logger, mongoose, moment }
             });
 
             if (browserResult.notified) {
@@ -880,9 +883,108 @@ function formatUptime(uptime) {
   return result;
 }
 
+/**
+ * Procesa y envía notificaciones de movimientos judiciales
+ * Este job busca movimientos pendientes que deben notificarse según su hora programada
+ */
+async function judicialMovementNotificationJob() {
+  try {
+    logger.info('Iniciando trabajo de notificaciones de movimientos judiciales');
+
+    // Buscar todos los usuarios que tienen movimientos pendientes de notificar
+    const now = new Date();
+    const pendingMovements = await JudicialMovement.aggregate([
+      {
+        $match: {
+          notificationStatus: 'pending',
+          'notificationSettings.notifyAt': { $lte: now }
+        }
+      },
+      {
+        $group: {
+          _id: '$userId',
+          count: { $sum: 1 },
+          movements: { $push: '$$ROOT' }
+        }
+      }
+    ]);
+
+    logger.info(`Se encontraron ${pendingMovements.length} usuarios con movimientos judiciales pendientes`);
+
+    let totalNotifications = 0;
+    let totalSuccessful = 0;
+    let totalFailed = 0;
+
+    // Procesar cada usuario
+    for (const group of pendingMovements) {
+      try {
+        const userId = group._id;
+        const user = await User.findById(userId);
+
+        if (!user) {
+          logger.warn(`Usuario ${userId} no encontrado, marcando movimientos como fallidos`);
+          await JudicialMovement.updateMany(
+            { userId, notificationStatus: 'pending' },
+            { 
+              $set: { notificationStatus: 'failed' },
+              $push: {
+                notifications: {
+                  date: new Date(),
+                  type: 'system',
+                  success: false,
+                  details: 'Usuario no encontrado'
+                }
+              }
+            }
+          );
+          totalFailed += group.count;
+          continue;
+        }
+
+        // Enviar notificaciones
+        const result = await sendJudicialMovementNotifications({
+          userId: user._id,
+          models: { User, JudicialMovement, NotificationLog },
+          utilities: { sendEmail, logger, moment }
+        });
+
+        if (result.success && result.notified) {
+          totalNotifications += result.count || 0;
+          totalSuccessful++;
+          logger.info(`Notificación de movimientos judiciales enviada a ${user.email} con ${result.count} movimientos`);
+        } else if (!result.success) {
+          totalFailed++;
+          logger.error(`Error al enviar notificaciones judiciales a ${user.email}: ${result.message}`);
+        }
+
+      } catch (userError) {
+        totalFailed++;
+        logger.error(`Error procesando movimientos judiciales para usuario ${group._id}: ${userError.message}`);
+      }
+    }
+
+    // Limpiar movimientos antiguos (opcional: mantener historial de 30 días)
+    const thirtyDaysAgo = moment().subtract(30, 'days').toDate();
+    const cleanupResult = await JudicialMovement.deleteMany({
+      notificationStatus: 'sent',
+      'movimiento.fecha': { $lt: thirtyDaysAgo }
+    });
+
+    logger.info(`Trabajo de notificaciones de movimientos judiciales completado:`);
+    logger.info(`- Total de notificaciones enviadas: ${totalNotifications}`);
+    logger.info(`- Usuarios procesados exitosamente: ${totalSuccessful}`);
+    logger.info(`- Usuarios con errores: ${totalFailed}`);
+    logger.info(`- Movimientos antiguos eliminados: ${cleanupResult.deletedCount}`);
+
+  } catch (error) {
+    logger.error(`Error crítico en trabajo de notificaciones judiciales: ${error.message}`, error);
+  }
+}
+
 module.exports = {
   calendarNotificationJob,
   taskNotificationJob,
   movementNotificationJob,
-  clearLogsJob
+  clearLogsJob,
+  judicialMovementNotificationJob
 };

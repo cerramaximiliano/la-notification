@@ -2,12 +2,68 @@ const mongoose = require("mongoose");
 const moment = require("moment");
 const logger = require("../config/logger");
 const { sendEmail } = require("./email");
-const User = require("../models/User");
-const Event = require("../models/Event");
-const Task = require("../models/Task");
-const Movement = require('../models/Movement');
-const Alert = require("../models/Alert");
+const { User, Event, Task, Movement, Alert, NotificationLog } = require("../models");
+const { addNotificationAtomic } = require("./notificationHelper");
 
+/**
+ * Genera el wrapper HTML base para todos los emails
+ * @param {string} title - Título del email
+ * @param {string} content - Contenido HTML del email
+ * @returns {string} HTML completo con estilos y responsive design
+ */
+function generateEmailTemplate(title, content) {
+  return `<!DOCTYPE html>
+<html lang="es" style="width: 100%; max-width: 100%; overflow-x: hidden;">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} - Law||Analytics</title>
+  <style>
+    @media screen and (max-width: 600px) {
+      body { margin: 0 !important; padding: 0 !important; }
+      .container { width: 100% !important; padding: 15px !important; max-width: 100% !important; margin: 0 !important; box-sizing: border-box !important; }
+      .content-block { padding: 0 !important; }
+      .feature-box { padding: 15px !important; }
+      .feature-box div.feature-wrapper { display: block !important; width: 100% !important; }
+      .feature-item { width: 100% !important; max-width: 100% !important; margin-bottom: 15px !important; flex: none !important; }
+      .footer-links a { display: block !important; margin: 5px 0 !important; }
+      h1 { font-size: 20px !important; }
+      h2 { font-size: 18px !important; }
+      .button { width: auto !important; display: block !important; margin: 0 auto !important; max-width: 100% !important; box-sizing: border-box !important; }
+      .logo img { max-width: 150px !important; height: auto !important; }
+      p, h1, h2, h3, h4, div, ul, ol, li { max-width: 100% !important; box-sizing: border-box !important; word-wrap: break-word !important; }
+      table { width: 100% !important; }
+      td, th { padding: 8px !important; font-size: 14px !important; }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; background-color: #f0f4f8; width: 100%; overflow-x: hidden;">
+  <div class="container" style="max-width: 600px; margin: 0 auto; padding: 30px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); box-sizing: border-box;">
+    <div class="logo" style="text-align: center; margin-bottom: 30px; max-width: 100%; box-sizing: border-box;">
+      <img src="https://res.cloudinary.com/dqyoeolib/image/upload/v1746261520/gzemrcj26etf5n6t1dmw.png" alt="Law||Analytics Logo" style="max-width: 180px; height: auto;">
+    </div>
+    
+    <div class="content-block" style="margin-bottom: 30px; max-width: 100%; box-sizing: border-box; word-wrap: break-word;">
+      ${content}
+    </div>
+    
+    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+    
+    <p style="font-size: 14px; color: #6b7280; margin-bottom: 15px; line-height: 1.5; text-align: justify; max-width: 100%; box-sizing: border-box; word-wrap: break-word;">
+      Si tiene alguna pregunta, nuestro equipo está disponible en <a href="mailto:soporte@lawanalytics.app" style="color: #2563eb; text-decoration: none;">soporte@lawanalytics.app</a>
+    </p>
+    
+    <div style="font-size: 12px; color: #6b7280; max-width: 100%; box-sizing: border-box; word-wrap: break-word;">
+      <p style="margin-bottom: 10px; text-align: center; max-width: 100%; box-sizing: border-box; word-wrap: break-word;">© 2025 Law||Analytics - Todos los derechos reservados</p>
+      <p class="footer-links" style="line-height: 1.6; text-align: center; max-width: 100%; box-sizing: border-box; word-wrap: break-word;">
+        <a href="${process.env.BASE_URL || 'https://lawanalytics.app'}/privacy-policy" style="color: #2563eb; margin-right: 10px; display: inline-block; text-decoration: none;">Política de privacidad</a>
+        <a href="${process.env.BASE_URL || 'https://lawanalytics.app'}/terms" style="color: #2563eb; margin-right: 10px; display: inline-block; text-decoration: none;">Términos de servicio</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
 
 /* Movements Notifications */
 async function sendMovementNotifications({
@@ -183,18 +239,18 @@ async function sendMovementNotifications({
         // Crear el contenido del correo electrónico
         const subject = `Law||Analytics: Tienes ${upcomingMovements.length} movimiento(s) próximo(s) a expirar`;
 
-        // Construir una tabla HTML con los movimientos
+        // Construir el contenido interno del email
         let htmlContent = `
-          <h2>Recordatorio de movimientos próximos a expirar</h2>
-          <p>Hola ${user.firstName || 'Usuario'},</p>
-          <p>Te recordamos que tienes los siguientes movimientos próximos a expirar:</p>
-          <table style="border-collapse: collapse; width: 100%;">
+          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Recordatorio de movimientos próximos a expirar</h2>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Te recordamos que tienes los siguientes movimientos próximos a expirar:</p>
+          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
             <thead>
-              <tr style="background-color: #f5f5f5;">
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Fecha de expiración</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Título</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Tipo de movimiento</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Descripción</th>
+              <tr style="background-color: #f0f4f8;">
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha de expiración</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Título</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Tipo de movimiento</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Descripción</th>
               </tr>
             </thead>
             <tbody>
@@ -202,7 +258,7 @@ async function sendMovementNotifications({
 
         // Contenido en texto plano para alternativa sin formato HTML
         let textContent = `Recordatorio de movimientos próximos a expirar\n\n`;
-        textContent += `Hola ${user.firstName || 'Usuario'},\n\n`;
+        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
         textContent += `Te recordamos que tienes los siguientes movimientos próximos a expirar:\n\n`;
 
         // Crear un array para los IDs de movimientos que se notificarán
@@ -226,10 +282,10 @@ async function sendMovementNotifications({
             // Formato HTML
             htmlContent += `
             <tr>
-              <td style="border: 1px solid #ddd; padding: 8px;">${formattedExpirationDate}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${movement.title}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${movement.movement}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${movement.description || '-'}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${formattedExpirationDate}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${movement.title}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${movement.movement}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${movement.description || '-'}</td>
             </tr>
           `;
 
@@ -241,55 +297,88 @@ async function sendMovementNotifications({
         htmlContent += `
             </tbody>
           </table>
-          <p>Puedes ver todos los detalles en la sección de movimientos de tu cuenta de Law||Analytics.</p>
-          <p>Saludos,<br>El equipo de Law||Analytics</p>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Puedes ver todos los detalles en la sección de movimientos de tu cuenta de Law||Analytics.</p>
+          <p style="font-size: 16px; line-height: 1.6;">Saludos,<br>El equipo de Law||Analytics</p>
         `;
 
         textContent += `\nPuedes ver todos los detalles en la sección de movimientos de tu cuenta de Law||Analytics.\n\n`;
         textContent += `Saludos,\nEl equipo de Law||Analytics`;
 
         // Enviar el correo electrónico
-        await sendEmail(user.email, subject, htmlContent, textContent);
+        let emailStatus = 'sent';
+        let failureReason = null;
+        
+        try {
+            const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
+            await sendEmail(user.email, subject, fullHtmlContent, textContent);
+        } catch (emailError) {
+            emailStatus = 'failed';
+            failureReason = emailError.message;
+            logger.error(`Error enviando email a ${user.email}:`, emailError);
+        }
 
         // Crear el objeto de notificación que se añadirá a cada movimiento
         const notificationDetails = {
             date: new Date(),
             type: 'email',
-            success: true,
-            details: `Notificación enviada a ${user.email}`
+            success: emailStatus === 'sent',
+            details: emailStatus === 'sent' 
+                ? `Notificación enviada a ${user.email}`
+                : `Error enviando notificación: ${failureReason}`
         };
+        
+        // Registrar en NotificationLog para cada movimiento
+        const notificationLogs = [];
+        for (const movement of upcomingMovements) {
+            try {
+                const log = await NotificationLog.createFromEntity('movement', movement, {
+                    method: 'email',
+                    status: emailStatus,
+                    content: {
+                        subject: subject,
+                        message: htmlContent,
+                        template: 'movement_expiration'
+                    },
+                    delivery: {
+                        recipientEmail: user.email,
+                        failureReason: failureReason
+                    },
+                    config: {
+                        daysInAdvance: movement.notificationSettings?.daysInAdvance || globalDaysInAdvance,
+                        notifyOnceOnly: movement.notificationSettings?.notifyOnceOnly || userExpirationSettings.notifyOnceOnly
+                    },
+                    metadata: {
+                        source: forceDaily ? 'cron_daily' : 'cron',
+                        batchSize: upcomingMovements.length
+                    },
+                    sentAt: new Date()
+                }, user._id);
+                
+                notificationLogs.push(log);
+            } catch (logError) {
+                logger.error(`Error creando NotificationLog para movimiento ${movement._id}:`, logError);
+            }
+        }
 
-        // Inicializar la configuración de notificaciones para movimientos sin ella,
-        // usando la configuración global del usuario
-        await Movement.updateMany(
+        // Usar operación atómica para agregar notificaciones sin duplicados
+        const atomicResult = await addNotificationAtomic(
+            Movement,
+            notifiedMovementIds,
+            notificationDetails,
             {
-                _id: { $in: notifiedMovementIds },
-                notificationSettings: { $exists: false }
-            },
-            {
-                $set: {
-                    notificationSettings: {
-                        notifyOnceOnly: userExpirationSettings.notifyOnceOnly,
-                        daysInAdvance: userExpirationSettings.daysInAdvance
-                    }
+                windowSeconds: 5,
+                userSettings: {
+                    notifyOnceOnly: userExpirationSettings.notifyOnceOnly,
+                    daysInAdvance: userExpirationSettings.daysInAdvance
                 }
             }
         );
-
-        // Inicializar el array de notificaciones si no existe
-        await Movement.updateMany(
-            {
-                _id: { $in: notifiedMovementIds },
-                notifications: { $exists: false }
-            },
-            { $set: { notifications: [] } }
-        );
-
-        // Añadir la notificación a todos los movimientos
-        await Movement.updateMany(
-            { _id: { $in: notifiedMovementIds } },
-            { $push: { notifications: notificationDetails } }
-        );
+        
+        if (!atomicResult.success) {
+            logger.error(`Error agregando notificaciones atómicamente: ${atomicResult.error}`);
+        } else {
+            logger.info(`Notificaciones agregadas: ${atomicResult.modifiedCount}/${atomicResult.totalCount}, omitidas por duplicados: ${atomicResult.skippedCount}`);
+        }
 
         logger.info(`Notificación de movimientos enviada a ${user.email} para ${upcomingMovements.length} movimientos`);
 
@@ -493,17 +582,17 @@ async function sendCalendarNotifications({
         // Crear el contenido del correo electrónico
         const subject = `Law||Analytics: Tienes ${upcomingEvents.length} evento(s) próximo(s) en tu calendario`;
 
-        // Construir una tabla HTML con los eventos
+        // Construir el contenido interno del email
         let htmlContent = `
-          <h2>Recordatorio de eventos próximos</h2>
-          <p>Hola ${user.firstName || 'Usuario'},</p>
-          <p>Te recordamos que tienes los siguientes eventos programados en tu calendario:</p>
-          <table style="border-collapse: collapse; width: 100%;">
+          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Recordatorio de eventos próximos</h2>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Te recordamos que tienes los siguientes eventos programados en tu calendario:</p>
+          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
             <thead>
-              <tr style="background-color: #f5f5f5;">
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Fecha</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Título</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Descripción</th>
+              <tr style="background-color: #f0f4f8;">
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Título</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Descripción</th>
               </tr>
             </thead>
             <tbody>
@@ -511,7 +600,7 @@ async function sendCalendarNotifications({
 
         // Contenido en texto plano para alternativa sin formato HTML
         let textContent = `Recordatorio de eventos próximos\n\n`;
-        textContent += `Hola ${user.firstName || 'Usuario'},\n\n`;
+        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
         textContent += `Te recordamos que tienes los siguientes eventos programados en tu calendario:\n\n`;
 
         // Crear un array para los IDs de eventos que se notificarán
@@ -573,7 +662,8 @@ async function sendCalendarNotifications({
         textContent += `Saludos,\nEl equipo de Law||Analytics`;
 
         // Enviar el correo electrónico
-        await sendEmail(user.email, subject, htmlContent, textContent);
+        const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
+        await sendEmail(user.email, subject, fullHtmlContent, textContent);
 
         // Registrar la notificación enviada en cada evento
         const notificationDetails = {
@@ -819,18 +909,18 @@ async function sendTaskNotifications({
         // Crear el contenido del correo electrónico
         const subject = `Law||Analytics: Tienes ${upcomingTasks.length} tarea(s) próxima(s) a vencer`;
 
-        // Construir una tabla HTML con las tareas
+        // Construir el contenido interno del email
         let htmlContent = `
-          <h2>Recordatorio de tareas próximas a vencer</h2>
-          <p>Hola ${user.firstName || 'Usuario'},</p>
-          <p>Te recordamos que tienes las siguientes tareas próximas a vencer:</p>
-          <table style="border-collapse: collapse; width: 100%;">
+          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Recordatorio de tareas próximas a vencer</h2>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Te recordamos que tienes las siguientes tareas próximas a vencer:</p>
+          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
             <thead>
-              <tr style="background-color: #f5f5f5;">
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Fecha de vencimiento</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Tarea</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Prioridad</th>
-                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Estado</th>
+              <tr style="background-color: #f0f4f8;">
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha de vencimiento</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Tarea</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Prioridad</th>
+                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Estado</th>
               </tr>
             </thead>
             <tbody>
@@ -838,7 +928,7 @@ async function sendTaskNotifications({
 
         // Contenido en texto plano para alternativa sin formato HTML
         let textContent = `Recordatorio de tareas próximas a vencer\n\n`;
-        textContent += `Hola ${user.firstName || 'Usuario'},\n\n`;
+        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
         textContent += `Te recordamos que tienes las siguientes tareas próximas a vencer:\n\n`;
 
         // Crear un array para los IDs de tareas que se notificarán
@@ -910,10 +1000,10 @@ async function sendTaskNotifications({
             // Formato HTML
             htmlContent += `
             <tr>
-              <td style="border: 1px solid #ddd; padding: 8px;">${formattedDate}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${task.name}</td>
-              <td style="border: 1px solid #ddd; padding: 8px; ${priorityColor}">${task.priority.toUpperCase()}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${statusText}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${formattedDate}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${task.name}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; ${priorityColor}">${task.priority.toUpperCase()}</td>
+              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${statusText}</td>
             </tr>
           `;
 
@@ -925,15 +1015,16 @@ async function sendTaskNotifications({
         htmlContent += `
             </tbody>
           </table>
-          <p>Puedes ver todos los detalles en la sección de tareas de tu cuenta de Law||Analytics.</p>
-          <p>Saludos,<br>El equipo de Law||Analytics</p>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Puedes ver todos los detalles en la sección de tareas de tu cuenta de Law||Analytics.</p>
+          <p style="font-size: 16px; line-height: 1.6;">Saludos,<br>El equipo de Law||Analytics</p>
         `;
 
         textContent += `\nPuedes ver todos los detalles en la sección de tareas de tu cuenta de Law||Analytics.\n\n`;
         textContent += `Saludos,\nEl equipo de Law||Analytics`;
 
         // Enviar el correo electrónico
-        await sendEmail(user.email, subject, htmlContent, textContent);
+        const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
+        await sendEmail(user.email, subject, fullHtmlContent, textContent);
 
         // Crear el objeto de notificación que se añadirá a cada tarea
         const notificationDetails = {
@@ -1175,8 +1266,240 @@ const helpers = {
 
 
 
+/* Judicial Movements Notifications */
+async function sendJudicialMovementNotifications({
+    userId: requestUserId,
+    user: reqUser,
+    models: { User, JudicialMovement, NotificationLog },
+    utilities: { sendEmail, logger, moment }
+}) {
+    try {
+        // Obtener userId
+        const userId = requestUserId || (reqUser && reqUser._id);
+        if (!userId) {
+            return {
+                success: false,
+                statusCode: 400,
+                message: 'Se requiere un ID de usuario'
+            };
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return {
+                success: false,
+                statusCode: 404,
+                message: 'Usuario no encontrado'
+            };
+        }
+
+        // Verificar preferencias de notificación
+        const preferences = user.preferences || {};
+        const notifications = preferences.notifications || {};
+        const emailEnabled = notifications.channels && notifications.channels.email !== false;
+
+        if (!emailEnabled) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'Las notificaciones por email no están habilitadas',
+                notified: false
+            };
+        }
+
+        // Buscar movimientos judiciales pendientes de notificar
+        const now = new Date();
+        const pendingMovements = await JudicialMovement.find({
+            userId,
+            notificationStatus: 'pending',
+            'notificationSettings.notifyAt': { $lte: now }
+        }).sort({ 'movimiento.fecha': -1 });
+
+        if (pendingMovements.length === 0) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'No hay movimientos judiciales pendientes de notificar',
+                notified: false
+            };
+        }
+
+        // Agrupar movimientos por expediente
+        const movementsByExpediente = {};
+        pendingMovements.forEach(movement => {
+            const key = `${movement.expediente.number}/${movement.expediente.year}`;
+            if (!movementsByExpediente[key]) {
+                movementsByExpediente[key] = {
+                    expediente: movement.expediente,
+                    movements: []
+                };
+            }
+            movementsByExpediente[key].movements.push(movement);
+        });
+
+        // Crear contenido del email
+        const subject = `Law||Analytics: Nuevos movimientos en ${Object.keys(movementsByExpediente).length} expediente(s)`;
+        
+        let htmlContent = `
+          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Nuevos movimientos judiciales</h2>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Se han registrado nuevos movimientos en tus expedientes:</p>
+        `;
+
+        let textContent = `Nuevos movimientos judiciales\n\n`;
+        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
+        textContent += `Se han registrado nuevos movimientos en tus expedientes:\n\n`;
+
+        // IDs de movimientos notificados
+        const notifiedMovementIds = [];
+
+        // Agregar información de cada expediente
+        for (const [key, data] of Object.entries(movementsByExpediente)) {
+            const { expediente, movements } = data;
+            
+            htmlContent += `
+              <div style="margin-bottom: 30px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
+                <h3 style="color: #1f2937; margin-bottom: 15px; font-size: 18px;">
+                  Expediente ${expediente.number}/${expediente.year} - ${expediente.fuero}
+                </h3>
+                <p style="font-size: 14px; color: #6b7280; margin-bottom: 15px;">
+                  <strong>Carátula:</strong> ${expediente.caratula}
+                </p>
+                <table style="border-collapse: collapse; width: 100%; margin-bottom: 15px;">
+                  <thead>
+                    <tr style="background-color: #f0f4f8;">
+                      <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Fecha</th>
+                      <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Tipo</th>
+                      <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Detalle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+            `;
+
+            textContent += `\nExpediente ${expediente.number}/${expediente.year} - ${expediente.fuero}\n`;
+            textContent += `Carátula: ${expediente.caratula}\n\n`;
+
+            // Agregar cada movimiento
+            movements.forEach(movement => {
+                const fecha = moment(movement.movimiento.fecha).format('DD/MM/YYYY');
+                notifiedMovementIds.push(movement._id);
+
+                htmlContent += `
+                  <tr>
+                    <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${fecha}</td>
+                    <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${movement.movimiento.tipo}</td>
+                    <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${movement.movimiento.detalle}</td>
+                  </tr>
+                `;
+
+                textContent += `- ${fecha}: ${movement.movimiento.tipo} - ${movement.movimiento.detalle}\n`;
+            });
+
+            htmlContent += `
+                  </tbody>
+                </table>
+              </div>
+            `;
+        }
+
+        htmlContent += `
+          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+            Puedes ver todos los detalles en la sección de expedientes de tu cuenta de Law||Analytics.
+          </p>
+          <p style="font-size: 16px; line-height: 1.6;">Saludos,<br>El equipo de Law||Analytics</p>
+        `;
+
+        textContent += `\nPuedes ver todos los detalles en la sección de expedientes de tu cuenta de Law||Analytics.\n\n`;
+        textContent += `Saludos,\nEl equipo de Law||Analytics`;
+
+        // Enviar email
+        let emailStatus = 'sent';
+        let failureReason = null;
+        
+        try {
+            const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
+            await sendEmail(user.email, subject, fullHtmlContent, textContent);
+        } catch (emailError) {
+            emailStatus = 'failed';
+            failureReason = emailError.message;
+            logger.error(`Error enviando email de movimientos judiciales a ${user.email}:`, emailError);
+        }
+
+        // Actualizar estado de notificación
+        const notificationDetails = {
+            date: new Date(),
+            type: 'email',
+            success: emailStatus === 'sent',
+            details: emailStatus === 'sent' 
+                ? `Notificación enviada a ${user.email}`
+                : `Error enviando notificación: ${failureReason}`
+        };
+
+        // Actualizar movimientos notificados
+        await JudicialMovement.updateMany(
+            { _id: { $in: notifiedMovementIds } },
+            {
+                $set: { 
+                    notificationStatus: emailStatus === 'sent' ? 'sent' : 'failed' 
+                },
+                $push: { 
+                    notifications: notificationDetails 
+                }
+            }
+        );
+
+        // Registrar en NotificationLog
+        for (const movement of pendingMovements) {
+            try {
+                await NotificationLog.createFromEntity('judicial_movement', movement, {
+                    method: 'email',
+                    status: emailStatus,
+                    content: {
+                        subject: subject,
+                        message: htmlContent,
+                        template: 'judicial_movement'
+                    },
+                    delivery: {
+                        recipientEmail: user.email,
+                        failureReason: failureReason
+                    },
+                    metadata: {
+                        source: 'cron',
+                        expediente: `${movement.expediente.number}/${movement.expediente.year}`
+                    },
+                    sentAt: new Date()
+                }, user._id);
+            } catch (logError) {
+                logger.error(`Error creando NotificationLog para movimiento judicial ${movement._id}:`, logError);
+            }
+        }
+
+        logger.info(`Notificación de movimientos judiciales enviada a ${user.email} para ${pendingMovements.length} movimientos`);
+
+        return {
+            success: true,
+            statusCode: 200,
+            message: `Se notificaron ${pendingMovements.length} movimientos judiciales`,
+            count: pendingMovements.length,
+            notified: true,
+            userId: userId,
+            movementIds: notifiedMovementIds
+        };
+
+    } catch (error) {
+        logger.error(`Error al enviar notificaciones de movimientos judiciales: ${error.message}`);
+        return {
+            success: false,
+            statusCode: 500,
+            message: 'Error al enviar notificaciones',
+            error: error.message
+        };
+    }
+};
+
 module.exports = {
     sendCalendarNotifications,
     sendTaskNotifications,
     sendMovementNotifications,
+    sendJudicialMovementNotifications,
 };
