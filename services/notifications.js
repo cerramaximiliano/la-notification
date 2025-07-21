@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const moment = require("moment");
 const logger = require("../config/logger");
 const { sendEmail } = require("./email");
-const { User, Event, Task, Movement, Alert, NotificationLog } = require("../models");
+const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement } = require("../models");
 const { addNotificationAtomic } = require("./notificationHelper");
 
 /**
@@ -1437,21 +1437,44 @@ async function sendJudicialMovementNotifications({
                 ? `Notificación enviada a ${user.email}`
                 : `Error enviando notificación: ${failureReason}`
         };
+        
+        logger.info(`Detalles de notificación a guardar:`, JSON.stringify(notificationDetails));
 
         // Actualizar movimientos notificados
         logger.info(`Actualizando ${notifiedMovementIds.length} movimientos judiciales a estado: ${emailStatus}`);
-        const updateResult = await JudicialMovement.updateMany(
-            { _id: { $in: notifiedMovementIds } },
-            {
-                $set: { 
-                    notificationStatus: emailStatus === 'sent' ? 'sent' : 'failed' 
-                },
-                $push: { 
-                    notifications: notificationDetails 
+        
+        try {
+            // Actualizar estado y agregar notificación para cada movimiento
+            for (const movementId of notifiedMovementIds) {
+                const updateResult = await JudicialMovement.findByIdAndUpdate(
+                    movementId,
+                    {
+                        $set: { 
+                            notificationStatus: emailStatus 
+                        },
+                        $push: { 
+                            notifications: {
+                                date: notificationDetails.date,
+                                type: notificationDetails.type,
+                                success: notificationDetails.success,
+                                details: notificationDetails.details
+                            }
+                        }
+                    },
+                    { new: true }
+                );
+                
+                if (updateResult) {
+                    logger.info(`Movimiento ${movementId} actualizado exitosamente a estado: ${emailStatus}`);
+                } else {
+                    logger.error(`No se pudo actualizar el movimiento ${movementId}`);
                 }
             }
-        );
-        logger.info(`Resultado actualización: ${updateResult.modifiedCount} de ${updateResult.matchedCount} documentos actualizados`);
+            
+            logger.info(`Todos los movimientos procesados`);
+        } catch (updateError) {
+            logger.error(`Error actualizando movimientos judiciales:`, updateError);
+        }
 
         // Registrar en NotificationLog
         for (const movement of pendingMovements) {
