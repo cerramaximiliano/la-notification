@@ -9,7 +9,7 @@ const EmailTemplateSchema = new mongoose.Schema(
       enum: [
         'subscription', 'auth', 'support', 'tasks', 'documents', 'notification', 'welcome',
         'calculadora', 'gestionTareas', 'gestionCausas', 'gestionContactos', 'gestionCalendario', 'secuenciaOnboarding',
-        'promotional', 'booking', 'newsletter', 'transactional', 'reactivation', 'improved', 'ab-test'
+        'promotional', 'booking', 'newsletter', 'transactional', 'reactivation', 'improved', 'ab-test', 'administration'
       ],
       index: true
     },
