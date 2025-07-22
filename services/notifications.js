@@ -1161,8 +1161,7 @@ async function sendJudicialMovementNotifications({
         let failureReason = null;
         
         try {
-            const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
-            await sendEmail(user.email, subject, fullHtmlContent, textContent);
+            await sendEmail(user.email, subject, htmlContent, textContent);
         } catch (emailError) {
             emailStatus = 'failed';
             failureReason = emailError.message;
