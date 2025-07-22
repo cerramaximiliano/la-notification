@@ -152,7 +152,8 @@ function processJudicialMovementsData(movementsByExpediente, user) {
     userEmail: user.email,
     expedientesCount: Object.keys(movementsByExpediente).length,
     expedientesHtml,
-    expedientesText
+    expedientesText,
+    'process.env.BASE_URL': process.env.BASE_URL || ''
   };
 }
 
