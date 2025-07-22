@@ -237,81 +237,36 @@ async function sendMovementNotifications({
             };
         }
 
-        // Crear el contenido del correo electrónico
-        const subject = `Law||Analytics: Tienes ${upcomingMovements.length} movimiento(s) próximo(s) a expirar`;
-
-        // Construir el contenido interno del email
-        let htmlContent = `
-          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Recordatorio de movimientos próximos a expirar</h2>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Te recordamos que tienes los siguientes movimientos próximos a expirar:</p>
-          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-            <thead>
-              <tr style="background-color: #f0f4f8;">
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha de expiración</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Título</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Tipo de movimiento</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Descripción</th>
-              </tr>
-            </thead>
-            <tbody>
-        `;
-
-        // Contenido en texto plano para alternativa sin formato HTML
-        let textContent = `Recordatorio de movimientos próximos a expirar\n\n`;
-        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
-        textContent += `Te recordamos que tienes los siguientes movimientos próximos a expirar:\n\n`;
-
+        // Usar el template de la base de datos
+        const { processMovementsData } = require('./movementTemplateProcessor');
+        const { getProcessedTemplate } = require('./templateProcessor');
+        
         // Crear un array para los IDs de movimientos que se notificarán
-        const notifiedMovementIds = [];
-
-        // Agregar cada movimiento a la tabla HTML y al texto plano
-        upcomingMovements.forEach(movement => {
-            // Convertir fecha a UTC ignorando la zona horaria
-            const expDate = moment.utc(movement.dateExpiration);
-
-            // Formatear fecha en DD/MM/YYYY usando UTC
-            const formattedExpirationDate = expDate.format('DD/MM/YYYY');
-
-            // Guardar el ID para actualizar después
-            notifiedMovementIds.push(movement._id);
-
-            // Obtener la configuración específica utilizada
+        const notifiedMovementIds = upcomingMovements.map(movement => {
+            // Log de configuración específica
             const movementSpecificDays = movement.notificationSettings?.daysInAdvance || globalDaysInAdvance;
             logger.debug(`Notificación por email para movimiento ${movement._id} (${movement.title}) usando configuración de días: ${movementSpecificDays}`);
-
-            // Formato HTML
-            htmlContent += `
-            <tr>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${formattedExpirationDate}</td>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${movement.title}</td>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${movement.movement}</td>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${movement.description || '-'}</td>
-            </tr>
-          `;
-
-            // Formato texto plano
-            textContent += `- ${formattedExpirationDate}: ${movement.title} (Tipo: ${movement.movement})\n`;
-            if (movement.description) textContent += `  ${movement.description}\n`;
+            return movement._id;
         });
-
-        htmlContent += `
-            </tbody>
-          </table>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Puedes ver todos los detalles en la sección de movimientos de tu cuenta de Law||Analytics.</p>
-          <p style="font-size: 16px; line-height: 1.6;">Saludos,<br>El equipo de Law||Analytics</p>
-        `;
-
-        textContent += `\nPuedes ver todos los detalles en la sección de movimientos de tu cuenta de Law||Analytics.\n\n`;
-        textContent += `Saludos,\nEl equipo de Law||Analytics`;
-
+        
+        // Procesar datos de los movimientos
+        const templateVariables = processMovementsData(upcomingMovements, user);
+        
+        // Obtener template procesado
+        const processedTemplate = await getProcessedTemplate('notification', 'movements-expiration', templateVariables);
+        
+        const subject = processedTemplate.subject;
+        const htmlContent = processedTemplate.html;
+        const textContent = processedTemplate.text;
+        
+        logger.info('Usando template de base de datos para notificaciones de movimientos');
+        
         // Enviar el correo electrónico
         let emailStatus = 'sent';
         let failureReason = null;
         
         try {
-            const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
-            await sendEmail(user.email, subject, fullHtmlContent, textContent);
+            await sendEmail(user.email, subject, htmlContent, textContent);
         } catch (emailError) {
             emailStatus = 'failed';
             failureReason = emailError.message;
