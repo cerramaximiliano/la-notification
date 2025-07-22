@@ -495,11 +495,18 @@ async function sendJudicialMovementBrowserAlerts({
             notificationStatus: 'pending'
         };
 
-        // Si los canales incluyen browser
+        // Buscar movimientos pendientes
+        // Si no tienen channels definido o incluyen 'browser'
         const judicialMovements = await models.JudicialMovement.find({
             ...baseQuery,
-            'notificationSettings.channels': 'browser'
+            $or: [
+                { 'notificationSettings.channels': 'browser' },
+                { 'notificationSettings.channels': { $exists: false } },
+                { 'notificationSettings.channels': [] }
+            ]
         }).sort({ 'movimiento.fecha': 1 });
+
+        logger.info(`Movimientos judiciales encontrados: ${judicialMovements.length} para usuario ${userId}`);
 
         // Filtrar según configuración específica
         const upcomingMovements = judicialMovements.filter(movement => {
@@ -512,6 +519,8 @@ async function sendJudicialMovementBrowserAlerts({
 
             return !alreadyNotifiedToday;
         });
+
+        logger.info(`Movimientos después de filtrar notificaciones de hoy: ${upcomingMovements.length}`);
 
         if (upcomingMovements.length === 0) {
             return {
