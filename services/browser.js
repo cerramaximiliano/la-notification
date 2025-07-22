@@ -489,13 +489,10 @@ async function sendJudicialMovementBrowserAlerts({
         const todayDateString = moment.utc().format('YYYY-MM-DD');
 
         // Buscar movimientos judiciales pendientes de notificar
+        // Los movimientos judiciales se notifican cuando ya ocurrieron (fecha pasada o actual)
         const baseQuery = {
             userId: userObjectId,
-            notificationStatus: 'pending',
-            'movimiento.fecha': {
-                $gte: today,
-                $lte: moment.utc().startOf('day').add(globalDaysInAdvance, 'days').endOf('day').toDate()
-            }
+            notificationStatus: 'pending'
         };
 
         // Si los canales incluyen browser

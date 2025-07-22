@@ -1400,19 +1400,33 @@ async function sendJudicialMovementNotifications({
                 try {
                     const movement = await JudicialMovement.findById(movementId);
                     if (movement) {
-                        movement.notifications = movement.notifications || [];
-                        movement.notifications.push({
+                        // Asegurarse de que notifications es un array
+                        if (!Array.isArray(movement.notifications)) {
+                            movement.notifications = [];
+                        }
+                        
+                        // Crear el objeto de notificación
+                        const notification = {
                             date: new Date(),
                             type: 'email',
                             success: emailStatus === 'sent',
-                            details: notificationDetails.details
-                        });
+                            details: emailStatus === 'sent' 
+                                ? `Notificación enviada a ${user.email}`
+                                : `Error enviando notificación: ${failureReason}`
+                        };
+                        
+                        // Agregar la notificación
+                        movement.notifications.push(notification);
+                        
+                        // Guardar el documento
                         await movement.save();
                         logger.info(`Notificación agregada a movimiento ${movementId}`);
                     }
                 } catch (err) {
                     logger.error(`Error agregando notificación a ${movementId}: ${err.message || err}`);
                     logger.error(`Stack trace:`, err.stack);
+                    logger.error(`Tipo de notifications:`, typeof movement?.notifications);
+                    logger.error(`Valor de notifications:`, JSON.stringify(movement?.notifications));
                 }
             }
             
@@ -1466,6 +1480,11 @@ async function sendJudicialMovementNotifications({
                         try {
                             const movement = await JudicialMovement.findById(movementId);
                             if (movement) {
+                                // Asegurarse de que notifications es un array
+                                if (!Array.isArray(movement.notifications)) {
+                                    movement.notifications = [];
+                                }
+                                
                                 movement.notifications.push({
                                     date: new Date(),
                                     type: 'browser',
