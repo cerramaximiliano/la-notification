@@ -907,125 +907,27 @@ async function sendTaskNotifications({
             };
         }
 
-        // Crear el contenido del correo electrónico
-        const subject = `Law||Analytics: Tienes ${upcomingTasks.length} tarea(s) próxima(s) a vencer`;
-
-        // Construir el contenido interno del email
-        let htmlContent = `
-          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Recordatorio de tareas próximas a vencer</h2>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Te recordamos que tienes las siguientes tareas próximas a vencer:</p>
-          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-            <thead>
-              <tr style="background-color: #f0f4f8;">
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha de vencimiento</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Tarea</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Prioridad</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-        `;
-
-        // Contenido en texto plano para alternativa sin formato HTML
-        let textContent = `Recordatorio de tareas próximas a vencer\n\n`;
-        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
-        textContent += `Te recordamos que tienes las siguientes tareas próximas a vencer:\n\n`;
-
+        // Usar el template de la base de datos
+        const { processTasksData } = require('./taskTemplateProcessor');
+        const { getProcessedTemplate } = require('./templateProcessor');
+        
         // Crear un array para los IDs de tareas que se notificarán
-        const notifiedTaskIds = [];
-
-        // Función para mapear la prioridad a colores en HTML
-        const getPriorityColor = (priority) => {
-            switch (priority) {
-                case 'alta': return 'background-color: #ffdddd; color: #d32f2f;';
-                case 'media': return 'background-color: #fff9c4; color: #f57f17;';
-                case 'baja': return 'background-color: #e8f5e9; color: #388e3c;';
-                default: return '';
-            }
-        };
-
-        // Función para mostrar el estado en español
-        const getStatusText = (status) => {
-            switch (status) {
-                case 'pendiente': return 'Pendiente';
-                case 'en_progreso': return 'En progreso';
-                case 'revision': return 'En revisión';
-                case 'completada': return 'Completada';
-                case 'cancelada': return 'Cancelada';
-                default: return status;
-            }
-        };
-
-        // Agregar cada tarea a la tabla HTML y al texto plano
-        upcomingTasks.forEach(task => {
-            // Extraer directamente los componentes de la fecha guardada
-            const dueDate = new Date(task.dueDate);
-
-            // Formato de fecha: DD/MM/YYYY
-            const day = dueDate.getUTCDate().toString().padStart(2, '0');
-            const month = (dueDate.getUTCMonth() + 1).toString().padStart(2, '0');
-            const year = dueDate.getUTCFullYear();
-
-            // Obtener la hora original si existe, o usar medianoche por defecto
-            let formattedTime = "";
-            if (task.dueTime) {
-                // Si tenemos dueTime guardado, lo usamos
-                const [hours, minutes] = task.dueTime.split(':');
-                const hour12 = (parseInt(hours) % 12) || 12;
-                const ampm = parseInt(hours) >= 12 ? 'p. m.' : 'a. m.';
-                formattedTime = `${hour12}:${minutes} ${ampm}`;
-            } else {
-                // Si no hay dueTime, extraemos la hora de dueDate
-                const hour = dueDate.getUTCHours().toString().padStart(2, '0');
-                const minute = dueDate.getUTCMinutes().toString().padStart(2, '0');
-                const ampm = parseInt(hour) >= 12 ? 'p. m.' : 'a. m.';
-                const hour12 = (parseInt(hour) % 12) || 12;
-                formattedTime = `${hour12}:${minute} ${ampm}`;
-            }
-
-            // Crear cadenas formateadas
-            const formattedDate = `${day}/${month}/${year}`;
-
-            // Guardar el ID para actualizar después
-            notifiedTaskIds.push(task._id);
-
-            // Obtener la configuración específica utilizada
-            const taskSpecificDays = task.notificationSettings?.daysInAdvance || globalDaysInAdvance;
-            logger.debug(`Notificación por email para tarea ${task._id} (${task.name}) usando configuración de días: ${taskSpecificDays}`);
-
-            // Obtener color y texto para la prioridad
-            const priorityColor = getPriorityColor(task.priority);
-            const statusText = getStatusText(task.status);
-
-            // Formato HTML
-            htmlContent += `
-            <tr>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${formattedDate}</td>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${task.name}</td>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; ${priorityColor}">${task.priority.toUpperCase()}</td>
-              <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${statusText}</td>
-            </tr>
-          `;
-
-            // Formato texto plano
-            textContent += `- ${formattedDate} ${formattedTime}: ${task.name} (Prioridad: ${task.priority.toUpperCase()}, Estado: ${statusText})\n`;
-            if (task.description) textContent += `  ${task.description}\n`;
-        });
-
-        htmlContent += `
-            </tbody>
-          </table>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Puedes ver todos los detalles en la sección de tareas de tu cuenta de Law||Analytics.</p>
-          <p style="font-size: 16px; line-height: 1.6;">Saludos,<br>El equipo de Law||Analytics</p>
-        `;
-
-        textContent += `\nPuedes ver todos los detalles en la sección de tareas de tu cuenta de Law||Analytics.\n\n`;
-        textContent += `Saludos,\nEl equipo de Law||Analytics`;
-
-        // Enviar el correo electrónico
-        const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
-        await sendEmail(user.email, subject, fullHtmlContent, textContent);
+        const notifiedTaskIds = upcomingTasks.map(task => task._id);
+        
+        // Procesar datos de las tareas
+        const templateVariables = processTasksData(upcomingTasks, user);
+        
+        // Obtener template procesado
+        const processedTemplate = await getProcessedTemplate('notification', 'tasks-reminder', templateVariables);
+        
+        const subject = processedTemplate.subject;
+        const htmlContent = processedTemplate.html;
+        const textContent = processedTemplate.text;
+        
+        logger.info('Usando template de base de datos para notificaciones de tareas');
+        
+        // Enviar el correo electrónico (ya no necesita generateEmailTemplate porque el template incluye todo)
+        await sendEmail(user.email, subject, htmlContent, textContent);
 
         // Crear el objeto de notificación que se añadirá a cada tarea
         const notificationDetails = {
