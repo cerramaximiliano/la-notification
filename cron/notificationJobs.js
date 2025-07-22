@@ -157,54 +157,20 @@ async function calendarNotificationJob() {
     if (process.env.ADMIN_EMAIL) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
-        const subject = `Law||Analytics: Informe de notificaciones de calendario`;
-
-        let htmlContent = `
-                  <h2>Informe de notificaciones de calendario</h2>
-                  <p>El sistema ha procesado las siguientes notificaciones de calendario:</p>
-                  
-                  <table style="border-collapse: collapse; width: 100%;">
-                      <tr style="background-color: #f5f5f5;">
-                          <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
-                          <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Total</th>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Usuarios procesados</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.usersProcessed}</td>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Usuarios notificados</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.usersNotified}</td>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Notificaciones por email</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.emailNotificationsSent}</td>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Alertas en navegador</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.browserAlertsSent}</td>
-                      </tr>
-                      <tr style="background-color: #f5f5f5; font-weight: bold;">
-                          <td style="border: 1px solid #ddd; padding: 8px;">Total notificaciones</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.totalEventNotifications}</td>
-                      </tr>
-                  </table>
-                  
-                  <p>Fecha y hora del informe: ${new Date().toLocaleString('es-ES')}</p>
-                  <p>Saludos,<br>Sistema de notificaciones de Law||Analytics</p>
-              `;
-
-        let textContent = `Informe de notificaciones de calendario\n\n`;
-        textContent += `El sistema ha procesado las siguientes notificaciones de calendario:\n\n`;
-        textContent += `- Usuarios procesados: ${summary.usersProcessed}\n`;
-        textContent += `- Usuarios notificados: ${summary.usersNotified}\n`;
-        textContent += `- Notificaciones por email: ${summary.emailNotificationsSent}\n`;
-        textContent += `- Alertas en navegador: ${summary.browserAlertsSent}\n`;
-        textContent += `- Total notificaciones: ${summary.totalEventNotifications}\n\n`;
-        textContent += `Fecha y hora del informe: ${new Date().toLocaleString('es-ES')}\n\n`;
-        textContent += `Saludos,\nSistema de notificaciones de Law||Analytics`;
-
-        await sendEmail(adminEmail, subject, htmlContent, textContent);
+        
+        // Usar template de base de datos
+        const { processCalendarReportData } = require('../services/adminReportProcessor');
+        const { getProcessedTemplate } = require('../services/templateProcessor');
+        
+        const templateVariables = processCalendarReportData(summary);
+        const processedTemplate = await getProcessedTemplate('administration', 'calendar-notifications-report', templateVariables);
+        
+        await sendEmail(
+          adminEmail, 
+          processedTemplate.subject, 
+          processedTemplate.html, 
+          processedTemplate.text
+        );
         logger.info(`Informe de notificaciones de calendario enviado al administrador: ${adminEmail}`);
       } catch (emailError) {
         logger.error(`Error al enviar informe de calendario al administrador: ${emailError.message}`);
@@ -356,54 +322,20 @@ async function taskNotificationJob() {
     if (process.env.ADMIN_EMAIL) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
-        const subject = `Law||Analytics: Informe de notificaciones de tareas`;
-
-        let htmlContent = `
-            <h2>Informe de notificaciones de tareas</h2>
-            <p>El sistema ha procesado las siguientes notificaciones de tareas:</p>
-            
-            <table style="border-collapse: collapse; width: 100%;">
-                <tr style="background-color: #f5f5f5;">
-                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
-                    <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Total</th>
-                </tr>
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">Usuarios procesados</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.usersProcessed}</td>
-                </tr>
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">Usuarios notificados</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.usersNotified}</td>
-                </tr>
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">Notificaciones por email</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.emailNotificationsSent}</td>
-                </tr>
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">Alertas en navegador</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.browserAlertsSent}</td>
-                </tr>
-                <tr style="background-color: #f5f5f5; font-weight: bold;">
-                    <td style="border: 1px solid #ddd; padding: 8px;">Total notificaciones</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.totalTaskNotifications}</td>
-                </tr>
-            </table>
-            
-            <p>Fecha y hora del informe: ${new Date().toLocaleString('es-ES')}</p>
-            <p>Saludos,<br>Sistema de notificaciones de Law||Analytics</p>
-        `;
-
-        let textContent = `Informe de notificaciones de tareas\n\n`;
-        textContent += `El sistema ha procesado las siguientes notificaciones de tareas:\n\n`;
-        textContent += `- Usuarios procesados: ${summary.usersProcessed}\n`;
-        textContent += `- Usuarios notificados: ${summary.usersNotified}\n`;
-        textContent += `- Notificaciones por email: ${summary.emailNotificationsSent}\n`;
-        textContent += `- Alertas en navegador: ${summary.browserAlertsSent}\n`;
-        textContent += `- Total notificaciones: ${summary.totalTaskNotifications}\n\n`;
-        textContent += `Fecha y hora del informe: ${new Date().toLocaleString('es-ES')}\n\n`;
-        textContent += `Saludos,\nSistema de notificaciones de Law||Analytics`;
-
-        await sendEmail(adminEmail, subject, htmlContent, textContent);
+        
+        // Usar template de base de datos
+        const { processTaskReportData } = require('../services/adminReportProcessor');
+        const { getProcessedTemplate } = require('../services/templateProcessor');
+        
+        const templateVariables = processTaskReportData(summary);
+        const processedTemplate = await getProcessedTemplate('administration', 'task-notifications-report', templateVariables);
+        
+        await sendEmail(
+          adminEmail, 
+          processedTemplate.subject, 
+          processedTemplate.html, 
+          processedTemplate.text
+        );
         logger.info(`Informe de notificaciones de tareas enviado al administrador: ${adminEmail}`);
       } catch (emailError) {
         logger.error(`Error al enviar informe de tareas al administrador: ${emailError.message}`);
@@ -555,54 +487,20 @@ async function movementNotificationJob() {
     if (process.env.ADMIN_EMAIL) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
-        const subject = `Law||Analytics: Informe de notificaciones de movimientos`;
-
-        let htmlContent = `
-                  <h2>Informe de notificaciones de movimientos</h2>
-                  <p>El sistema ha procesado las siguientes notificaciones de movimientos:</p>
-                  
-                  <table style="border-collapse: collapse; width: 100%;">
-                      <tr style="background-color: #f5f5f5;">
-                          <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
-                          <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Total</th>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Usuarios procesados</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.usersProcessed}</td>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Usuarios notificados</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.usersNotified}</td>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Notificaciones por email</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.emailNotificationsSent}</td>
-                      </tr>
-                      <tr>
-                          <td style="border: 1px solid #ddd; padding: 8px;">Alertas en navegador</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.browserAlertsSent}</td>
-                      </tr>
-                      <tr style="background-color: #f5f5f5; font-weight: bold;">
-                          <td style="border: 1px solid #ddd; padding: 8px;">Total notificaciones</td>
-                          <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.totalMovementNotifications}</td>
-                      </tr>
-                  </table>
-                  
-                  <p>Fecha y hora del informe: ${new Date().toLocaleString('es-ES')}</p>
-                  <p>Saludos,<br>Sistema de notificaciones de Law||Analytics</p>
-              `;
-
-        let textContent = `Informe de notificaciones de movimientos\n\n`;
-        textContent += `El sistema ha procesado las siguientes notificaciones de movimientos:\n\n`;
-        textContent += `- Usuarios procesados: ${summary.usersProcessed}\n`;
-        textContent += `- Usuarios notificados: ${summary.usersNotified}\n`;
-        textContent += `- Notificaciones por email: ${summary.emailNotificationsSent}\n`;
-        textContent += `- Alertas en navegador: ${summary.browserAlertsSent}\n`;
-        textContent += `- Total notificaciones: ${summary.totalMovementNotifications}\n\n`;
-        textContent += `Fecha y hora del informe: ${new Date().toLocaleString('es-ES')}\n\n`;
-        textContent += `Saludos,\nSistema de notificaciones de Law||Analytics`;
-
-        await sendEmail(adminEmail, subject, htmlContent, textContent);
+        
+        // Usar template de base de datos
+        const { processMovementReportData } = require('../services/adminReportProcessor');
+        const { getProcessedTemplate } = require('../services/templateProcessor');
+        
+        const templateVariables = processMovementReportData(summary);
+        const processedTemplate = await getProcessedTemplate('administration', 'movement-notifications-report', templateVariables);
+        
+        await sendEmail(
+          adminEmail, 
+          processedTemplate.subject, 
+          processedTemplate.html, 
+          processedTemplate.text
+        );
         logger.info(`Informe de notificaciones de movimientos enviado al administrador: ${adminEmail}`);
       } catch (emailError) {
         logger.error(`Error al enviar informe de movimientos al administrador: ${emailError.message}`);
@@ -710,108 +608,25 @@ async function clearLogsJob() {
     if (process.env.ADMIN_EMAIL) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
-        const subject = `Law||Analytics: Informe de limpieza de logs`;
-
-        let htmlContent = `
-          <h2>Informe de limpieza de logs</h2>
-          <p>El sistema ha completado la limpieza semanal de archivos de log:</p>
-          
-          <table style="border-collapse: collapse; width: 100%;">
-              <tr style="background-color: #f5f5f5;">
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Total</th>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Archivos procesados</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.filesProcessed}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Archivos limpiados</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.filesCleared}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Errores</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.errors}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Espacio liberado</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.spaceSaved}</td>
-              </tr>
-          </table>
-          
-          <h3>Detalle de archivos procesados</h3>
-          <table style="border-collapse: collapse; width: 100%;">
-              <tr style="background-color: #f5f5f5;">
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Archivo</th>
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Tamaño (MB)</th>
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Última modificación</th>
-              </tr>
-              ${Object.entries(summary.fileStats).map(([file, stats]) => `
-                <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">${file}</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${stats.size}</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${new Date(stats.modified).toLocaleString('es-ES')}</td>
-                </tr>
-              `).join('')}
-          </table>
-          
-          <h3>Estado del sistema</h3>
-          <table style="border-collapse: collapse; width: 100%;">
-              <tr style="background-color: #f5f5f5;">
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Métrica</th>
-                  <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Valor</th>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Uso de disco antes</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${(summary.systemInfo.diskUsageBefore.used / 1024 / 1024 / 1024).toFixed(2)} GB de ${(summary.systemInfo.diskUsageBefore.total / 1024 / 1024 / 1024).toFixed(2)} GB (${summary.systemInfo.diskUsageBefore.usedPercentage}%)</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Uso de disco después</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${(summary.systemInfo.diskUsageAfter.used / 1024 / 1024 / 1024).toFixed(2)} GB de ${(summary.systemInfo.diskUsageAfter.total / 1024 / 1024 / 1024).toFixed(2)} GB (${summary.systemInfo.diskUsageAfter.usedPercentage}%)</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Memoria RAM (RSS)</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.memoryUsage.rss}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Estado de la BD</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.dbStatus}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Tiempo de actividad</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.uptime}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Versión de Node.js</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${summary.systemInfo.nodeVersion}</td>
-              </tr>
-              <tr>
-                  <td style="border: 1px solid #ddd; padding: 8px;">Puerto del servidor</td>
-                  <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${process.env.PORT_NOTIFICATIONS || 3004}</td>
-              </tr>
-          </table>
-          
-          <p>Fecha y hora del informe: ${summary.systemInfo.serverTime}</p>
-          <p>Saludos,<br>Sistema de notificaciones de Law||Analytics</p>
-        `;
-
-        let textContent = `Informe de limpieza de logs\n\n`;
-        textContent += `El sistema ha completado la limpieza semanal de archivos de log:\n\n`;
-        textContent += `- Archivos procesados: ${summary.filesProcessed}\n`;
-        textContent += `- Archivos limpiados: ${summary.filesCleared}\n`;
-        textContent += `- Errores: ${summary.errors}\n`;
-        textContent += `- Espacio liberado: ${summary.systemInfo.spaceSaved}\n\n`;
-
-        textContent += `Estado del sistema:\n`;
-        textContent += `- Uso de disco: ${(summary.systemInfo.diskUsageAfter.used / 1024 / 1024 / 1024).toFixed(2)} GB de ${(summary.systemInfo.diskUsageAfter.total / 1024 / 1024 / 1024).toFixed(2)} GB (${summary.systemInfo.diskUsageAfter.usedPercentage}%)\n`;
-        textContent += `- Memoria RAM: ${summary.systemInfo.memoryUsage.rss}\n`;
-        textContent += `- Estado de la BD: ${summary.systemInfo.dbStatus}\n`;
-        textContent += `- Tiempo de actividad: ${summary.systemInfo.uptime}\n\n`;
-
-        textContent += `Fecha y hora del informe: ${summary.systemInfo.serverTime}\n\n`;
-        textContent += `Saludos,\nSistema de notificaciones de Law||Analytics`;
-
-        await sendEmail(adminEmail, subject, htmlContent, textContent);
+        
+        // Usar template de base de datos
+        const { processLogCleanupReportData } = require('../services/adminReportProcessor');
+        const { getProcessedTemplate } = require('../services/templateProcessor');
+        
+        const templateVariables = processLogCleanupReportData({
+          summary,
+          fileStats: summary.fileStats,
+          systemInfo: summary.systemInfo
+        });
+        
+        const processedTemplate = await getProcessedTemplate('administration', 'log-cleanup-report', templateVariables);
+        
+        await sendEmail(
+          adminEmail, 
+          processedTemplate.subject, 
+          processedTemplate.html, 
+          processedTemplate.text
+        );
         logger.info(`Informe de limpieza de logs enviado al administrador: ${adminEmail}`);
       } catch (emailError) {
         logger.error(`Error al enviar informe de limpieza de logs al administrador: ${emailError.message}`);
