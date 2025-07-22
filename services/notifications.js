@@ -1271,7 +1271,7 @@ const helpers = {
 async function sendJudicialMovementNotifications({
     userId: requestUserId,
     user: reqUser,
-    models: { User, JudicialMovement, NotificationLog },
+    models: { User, JudicialMovement, NotificationLog, Alert },
     utilities: { sendEmail, logger, moment }
 }) {
     try {
@@ -1348,95 +1348,15 @@ async function sendJudicialMovementNotifications({
             });
         }
 
-        let subject, htmlContent, textContent;
+        // Usar el template de la base de datos
+        const templateVariables = processJudicialMovementsData(movementsByExpediente, user);
+        const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
         
-        try {
-            // Intentar usar el template de la base de datos
-            const templateVariables = processJudicialMovementsData(movementsByExpediente, user);
-            const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
-            
-            subject = processedTemplate.subject;
-            htmlContent = processedTemplate.html;
-            textContent = processedTemplate.text;
-            
-            logger.info('Usando template de base de datos para movimientos judiciales');
-        } catch (templateError) {
-            logger.warn(`Error cargando template de BD: ${templateError.message}, usando template por defecto`);
-            
-            // Fallback al template original si hay error
-            subject = `Law||Analytics: Nuevos movimientos en ${Object.keys(movementsByExpediente).length} expediente(s)`;
-            
-            htmlContent = `
-              <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Nuevos movimientos judiciales</h2>
-              <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
-              <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Se han registrado nuevos movimientos en tus expedientes:</p>
-            `;
-
-            textContent = `Nuevos movimientos judiciales\n\n`;
-            textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
-            textContent += `Se han registrado nuevos movimientos en tus expedientes:\n\n`;
-
-            // Agregar información de cada expediente
-            for (const [key, data] of Object.entries(movementsByExpediente)) {
-                const { expediente, movements } = data;
-                
-                htmlContent += `
-                  <div style="margin-bottom: 30px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-                    <h3 style="color: #1f2937; margin-bottom: 15px; font-size: 18px;">
-                      Expediente ${expediente.number}/${expediente.year} - ${expediente.fuero}
-                    </h3>
-                    <p style="font-size: 14px; color: #6b7280; margin-bottom: 15px;">
-                      <strong>Carátula:</strong> ${expediente.caratula}
-                    </p>
-                    <table style="border-collapse: collapse; width: 100%; margin-bottom: 15px;">
-                      <thead>
-                        <tr style="background-color: #f0f4f8;">
-                          <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Fecha</th>
-                          <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Tipo</th>
-                          <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Detalle</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                `;
-
-                textContent += `\nExpediente ${expediente.number}/${expediente.year} - ${expediente.fuero}\n`;
-                textContent += `Carátula: ${expediente.caratula}\n\n`;
-
-                // Agregar cada movimiento
-                movements.forEach(movement => {
-                    const fecha = moment(movement.movimiento.fecha).format('DD/MM/YYYY');
-
-                    htmlContent += `
-                      <tr>
-                        <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${fecha}</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">${movement.movimiento.tipo}</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">
-                          ${movement.movimiento.detalle}
-                          ${movement.movimiento.url ? `<br><a href="${movement.movimiento.url}" style="color: #2563eb; font-size: 12px; text-decoration: none;">Ver documento</a>` : ''}
-                        </td>
-                      </tr>
-                    `;
-
-                    textContent += `- ${fecha}: ${movement.movimiento.tipo} - ${movement.movimiento.detalle}\n`;
-                });
-
-                htmlContent += `
-                      </tbody>
-                    </table>
-                  </div>
-                `;
-            }
-
-            htmlContent += `
-              <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
-                Puedes ver todos los detalles en la sección de expedientes de tu cuenta de Law||Analytics.
-              </p>
-              <p style="font-size: 16px; line-height: 1.6;">Saludos,<br>El equipo de Law||Analytics</p>
-            `;
-
-            textContent += `\nPuedes ver todos los detalles en la sección de expedientes de tu cuenta de Law||Analytics.\n\n`;
-            textContent += `Saludos,\nEl equipo de Law||Analytics`;
-        }
+        const subject = processedTemplate.subject;
+        const htmlContent = processedTemplate.html;
+        const textContent = processedTemplate.text;
+        
+        logger.info('Usando template de base de datos para movimientos judiciales');
 
         // Enviar email
         let emailStatus = 'sent';
@@ -1524,6 +1444,45 @@ async function sendJudicialMovementNotifications({
                 }, user._id);
             } catch (logError) {
                 logger.error(`Error creando NotificationLog para movimiento judicial ${movement._id}:`, logError);
+            }
+        }
+
+        // Enviar notificaciones de navegador si están habilitadas
+        const browserEnabled = notifications.channels && notifications.channels.browser === true;
+        if (browserEnabled && pendingMovements.length > 0) {
+            try {
+                const { sendJudicialMovementBrowserAlerts } = require('./browser');
+                const browserResult = await sendJudicialMovementBrowserAlerts({
+                    userId: userId,
+                    models: { User, JudicialMovement, Alert },
+                    utilities: { logger, mongoose: require('mongoose'), moment }
+                });
+                
+                if (browserResult.success && browserResult.notified) {
+                    logger.info(`Notificaciones de navegador enviadas para ${browserResult.count} movimientos judiciales`);
+                    
+                    // Actualizar notificaciones en los movimientos para indicar que se enviaron por browser
+                    for (const movementId of notifiedMovementIds) {
+                        try {
+                            const movement = await JudicialMovement.findById(movementId);
+                            if (movement) {
+                                movement.notifications.push({
+                                    date: new Date(),
+                                    type: 'browser',
+                                    success: true,
+                                    details: 'Alerta creada en el navegador'
+                                });
+                                await movement.save();
+                            }
+                        } catch (err) {
+                            logger.error(`Error agregando notificación browser a ${movementId}: ${err.message}`);
+                        }
+                    }
+                } else {
+                    logger.warn(`No se pudieron enviar notificaciones de navegador: ${browserResult.message}`);
+                }
+            } catch (browserError) {
+                logger.error(`Error enviando notificaciones de navegador para movimientos judiciales: ${browserError.message}`);
             }
         }
 

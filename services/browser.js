@@ -435,8 +435,170 @@ async function sendTaskBrowserAlerts(params) {
 }
 
 
+/**
+ * Función para enviar alertas de navegador para movimientos judiciales
+ */
+async function sendJudicialMovementBrowserAlerts({
+    days: requestedDaysInAdvance = null,
+    forceDaily = false,
+    userId: requestUserId,
+    user: reqUser,
+    models,
+    utilities: { logger, mongoose, moment }
+}) {
+    try {
+        // Obtener userId
+        const userId = requestUserId || (reqUser && reqUser._id);
+        if (!userId) {
+            return {
+                success: false,
+                statusCode: 400,
+                message: 'Se requiere un ID de usuario.'
+            };
+        }
+
+        const userObjectId = new mongoose.Types.ObjectId(userId.toString());
+
+        // Buscar usuario
+        const user = await models.User.findById(userObjectId);
+        if (!user) {
+            return {
+                success: false,
+                statusCode: 404,
+                message: 'Usuario no encontrado'
+            };
+        }
+
+        // Verificar notificaciones habilitadas
+        const notificationsEnabled = helpers.checkUserNotificationsEnabled(user, 'movement');
+        if (!notificationsEnabled) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'Las notificaciones de navegador para movimientos judiciales no están habilitadas',
+                notified: false
+            };
+        }
+
+        // Obtener configuración de notificaciones
+        const userSettings = helpers.getUserNotificationSettings(user, 'movement');
+        const globalDaysInAdvance = requestedDaysInAdvance || userSettings.daysInAdvance || 5;
+
+        // Fechas para el rango de búsqueda
+        const today = moment.utc().startOf('day').toDate();
+        const todayDateString = moment.utc().format('YYYY-MM-DD');
+
+        // Buscar movimientos judiciales pendientes de notificar
+        const baseQuery = {
+            userId: userObjectId,
+            notificationStatus: 'pending',
+            'movimiento.fecha': {
+                $gte: today,
+                $lte: moment.utc().startOf('day').add(globalDaysInAdvance, 'days').endOf('day').toDate()
+            }
+        };
+
+        // Si los canales incluyen browser
+        const judicialMovements = await models.JudicialMovement.find({
+            ...baseQuery,
+            'notificationSettings.channels': 'browser'
+        }).sort({ 'movimiento.fecha': 1 });
+
+        // Filtrar según configuración específica
+        const upcomingMovements = judicialMovements.filter(movement => {
+            // Verificar si ya se notificó hoy por browser
+            const alreadyNotifiedToday = movement.notifications && 
+                movement.notifications.some(n => {
+                    const notificationDate = n.date ? new Date(n.date).toISOString().split('T')[0] : '';
+                    return n.type === 'browser' && notificationDate === todayDateString;
+                });
+
+            return !alreadyNotifiedToday;
+        });
+
+        if (upcomingMovements.length === 0) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'No hay movimientos judiciales próximos para notificar',
+                notified: false,
+                daysInAdvance: globalDaysInAdvance
+            };
+        }
+
+        // Procesar alertas
+        const processedMovements = [];
+        const websocketService = require('./websocket');
+
+        for (const movement of upcomingMovements) {
+            try {
+                // Formatear fecha del movimiento
+                const formattedDate = moment.utc(movement.movimiento.fecha).format('DD/MM/YYYY');
+                
+                // Crear datos de la alerta
+                const alertData = {
+                    avatarIcon: 'Gavel',
+                    avatarType: 'icon',
+                    avatarSize: 40,
+                    secondaryText: `${movement.expediente.caratula} - Movimiento: ${movement.movimiento.tipo}`,
+                    expirationDate: movement.movimiento.fecha,
+                    actionText: 'Ver movimiento'
+                };
+
+                // Crear alerta
+                const newAlert = await models.Alert.create({
+                    userId: userId,
+                    sourceType: 'judicial_movement',
+                    sourceId: movement._id,
+                    ...alertData
+                });
+
+                // Intentar enviar por WebSocket
+                try {
+                    if (websocketService.isUserConnected(userId)) {
+                        await websocketService.sendPushAlert(userId, newAlert);
+                        logger.info(`Alerta push enviada al usuario ${userId} para movimiento judicial ${movement._id}`);
+                    } else {
+                        logger.info(`Usuario ${userId} no conectado, la alerta de movimiento judicial quedará pendiente`);
+                    }
+                } catch (wsError) {
+                    logger.error(`Error al enviar alerta push para movimiento judicial: ${wsError.message}`);
+                }
+
+                processedMovements.push(movement);
+
+            } catch (error) {
+                logger.error(`Error procesando alerta para movimiento judicial ${movement._id}:`, error);
+            }
+        }
+
+        logger.info(`Alertas de navegador creadas para ${processedMovements.length} movimientos judiciales`);
+
+        return {
+            success: true,
+            statusCode: 200,
+            message: `Se han creado alertas en el navegador para ${processedMovements.length} movimiento(s) judicial(es)`,
+            count: processedMovements.length,
+            notified: true,
+            userId: userId,
+            movementIds: processedMovements.map(m => m._id),
+            daysInAdvance: globalDaysInAdvance
+        };
+
+    } catch (error) {
+        logger.error(`Error al crear alertas de navegador para movimientos judiciales: ${error.message}`);
+        return {
+            success: false,
+            statusCode: 500,
+            message: 'Error al crear alertas de navegador para movimientos judiciales',
+            error: error.message
+        };
+    }
+}
+
 module.exports = {
     sendTaskBrowserAlerts,
     sendMovementBrowserAlerts,
     sendCalendarBrowserAlerts,
+    sendJudicialMovementBrowserAlerts
 }

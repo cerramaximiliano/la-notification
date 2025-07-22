@@ -944,7 +944,7 @@ async function judicialMovementNotificationJob() {
         // Enviar notificaciones
         const result = await sendJudicialMovementNotifications({
           userId: user._id,
-          models: { User, JudicialMovement, NotificationLog },
+          models: { User, JudicialMovement, NotificationLog, Alert },
           utilities: { sendEmail, logger, moment }
         });
 
