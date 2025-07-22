@@ -1203,7 +1203,7 @@ async function sendJudicialMovementNotifications({
                         }
                         
                         // Crear el objeto de notificación
-                        const notification = {
+                        const notificationEntry = {
                             date: new Date(),
                             type: 'email',
                             success: emailStatus === 'sent',
@@ -1213,7 +1213,7 @@ async function sendJudicialMovementNotifications({
                         };
                         
                         // Agregar la notificación
-                        movement.notifications.push(notification);
+                        movement.notifications.push(notificationEntry);
                         
                         // Guardar el documento
                         await movement.save();
@@ -1221,9 +1221,9 @@ async function sendJudicialMovementNotifications({
                     }
                 } catch (err) {
                     logger.error(`Error agregando notificación a ${movementId}: ${err.message || err}`);
-                    logger.error(`Stack trace:`, err.stack);
-                    logger.error(`Tipo de notifications:`, typeof movement?.notifications);
-                    logger.error(`Valor de notifications:`, JSON.stringify(movement?.notifications));
+                    if (err.stack) {
+                        logger.error(`Stack trace:`, err.stack);
+                    }
                 }
             }
             
