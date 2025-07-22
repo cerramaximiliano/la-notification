@@ -535,91 +535,32 @@ async function sendCalendarNotifications({
             };
         }
 
-        // Crear el contenido del correo electrónico
-        const subject = `Law||Analytics: Tienes ${upcomingEvents.length} evento(s) próximo(s) en tu calendario`;
-
-        // Construir el contenido interno del email
-        let htmlContent = `
-          <h2 style="color: #2563eb; margin-bottom: 20px; font-size: 24px; line-height: 1.3;">Recordatorio de eventos próximos</h2>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hola ${user.name || user.email || 'Usuario'},</p>
-          <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Te recordamos que tienes los siguientes eventos programados en tu calendario:</p>
-          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-            <thead>
-              <tr style="background-color: #f0f4f8;">
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Título</th>
-                <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Descripción</th>
-              </tr>
-            </thead>
-            <tbody>
-        `;
-
-        // Contenido en texto plano para alternativa sin formato HTML
-        let textContent = `Recordatorio de eventos próximos\n\n`;
-        textContent += `Hola ${user.name || user.email || 'Usuario'},\n\n`;
-        textContent += `Te recordamos que tienes los siguientes eventos programados en tu calendario:\n\n`;
-
+        // Usar el template de la base de datos
+        const { processEventsData } = require('./eventTemplateProcessor');
+        const { getProcessedTemplate } = require('./templateProcessor');
+        
         // Crear un array para los IDs de eventos que se notificarán
-        const notifiedEventIds = [];
-
-        // Agregar cada evento a la tabla HTML y al texto plano
-        upcomingEvents.forEach(event => {
-            // Extraer directamente los componentes de la fecha guardada
-            const startDate = new Date(event.start);
-
-            // Formato de fecha: DD/MM/YYYY
-            const day = startDate.getUTCDate().toString().padStart(2, '0');
-            const month = (startDate.getUTCMonth() + 1).toString().padStart(2, '0');
-            const year = startDate.getUTCFullYear();
-
-            // Formato de hora: HH:MM
-            const hour = startDate.getUTCHours().toString().padStart(2, '0');
-            const minute = startDate.getUTCMinutes().toString().padStart(2, '0');
-
-            // Determinar AM/PM
-            const ampm = hour >= 12 ? 'p. m.' : 'a. m.';
-
-            // Convertir a formato 12 horas
-            const hour12 = (hour % 12) || 12;
-
-            // Crear cadenas formateadas
-            const formattedDate = `${day}/${month}/${year}`;
-            const formattedTime = `${hour12}:${minute} ${ampm}`;
-
-            // Guardar el ID para actualizar después
-            notifiedEventIds.push(event._id);
-
-            // Obtener la configuración específica utilizada
+        const notifiedEventIds = upcomingEvents.map(event => {
+            // Log de configuración específica
             const eventSpecificDays = event.notificationSettings?.daysInAdvance || globalDaysInAdvance;
             logger.debug(`Notificación por email para evento ${event._id} (${event.title}) usando configuración de días: ${eventSpecificDays}`);
-
-            // Formato HTML
-            htmlContent += `
-            <tr>
-              <td style="border: 1px solid #ddd; padding: 8px;">${formattedDate} ${event.allDay ? '(Todo el día)' : formattedTime}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${event.title}</td>
-              <td style="border: 1px solid #ddd; padding: 8px;">${event.description || '-'}</td>
-            </tr>
-          `;
-
-            // Formato texto plano
-            textContent += `- ${formattedDate} ${event.allDay ? '(Todo el día)' : formattedTime}: ${event.title}\n`;
-            if (event.description) textContent += `  ${event.description}\n`;
+            return event._id;
         });
-
-        htmlContent += `
-            </tbody>
-          </table>
-          <p>Puedes ver todos los detalles en la sección de calendario de tu cuenta de Law||Analytics.</p>
-          <p>Saludos,<br>El equipo de Law||Analytics</p>
-        `;
-
-        textContent += `\nPuedes ver todos los detalles en la sección de calendario de tu cuenta de Law||Analytics.\n\n`;
-        textContent += `Saludos,\nEl equipo de Law||Analytics`;
-
+        
+        // Procesar datos de los eventos
+        const templateVariables = processEventsData(upcomingEvents, user);
+        
+        // Obtener template procesado
+        const processedTemplate = await getProcessedTemplate('notification', 'calendar-events', templateVariables);
+        
+        const subject = processedTemplate.subject;
+        const htmlContent = processedTemplate.html;
+        const textContent = processedTemplate.text;
+        
+        logger.info('Usando template de base de datos para notificaciones de calendario');
+        
         // Enviar el correo electrónico
-        const fullHtmlContent = generateEmailTemplate(subject, htmlContent);
-        await sendEmail(user.email, subject, fullHtmlContent, textContent);
+        await sendEmail(user.email, subject, htmlContent, textContent);
 
         // Registrar la notificación enviada en cada evento
         const notificationDetails = {
