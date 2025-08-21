@@ -67,8 +67,10 @@ judicialMovementSchema.index({ userId: 1, 'movimiento.fecha': 1, notificationSta
 judicialMovementSchema.index({ 'notificationSettings.notifyAt': 1, notificationStatus: 1 });
 
 // Método para generar clave única
-judicialMovementSchema.statics.generateUniqueKey = function(userId, expedienteId, movimientoFecha, movimientoTipo) {
-  return `${userId}_${expedienteId}_${movimientoFecha}_${movimientoTipo}`;
+judicialMovementSchema.statics.generateUniqueKey = function(userId, expedienteId, movimientoFecha, movimientoTipo, movimientoDetalle) {
+  // Incluir el detalle para diferenciar movimientos del mismo tipo en la misma fecha
+  const detalle = movimientoDetalle ? `_${movimientoDetalle.substring(0, 20).replace(/[^a-zA-Z0-9]/g, '')}` : '';
+  return `${userId}_${expedienteId}_${movimientoFecha}_${movimientoTipo}${detalle}`;
 };
 
 module.exports = mongoose.model("JudicialMovement", judicialMovementSchema);

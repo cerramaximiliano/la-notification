@@ -42,11 +42,13 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         } = movement;
 
         // Generar clave única para evitar duplicados
+        // Incluir el detalle para diferenciar movimientos del mismo tipo
         const uniqueKey = JudicialMovement.generateUniqueKey(
           userId,
           expediente.id,
           movimiento.fecha,
-          movimiento.tipo
+          movimiento.tipo,
+          movimiento.detalle
         );
 
         // Crear o actualizar el movimiento judicial

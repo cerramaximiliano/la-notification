@@ -1192,32 +1192,30 @@ async function sendJudicialMovementNotifications({
             
             logger.info(`Estado actualizado para ${statusUpdate.modifiedCount} movimientos`);
             
-            // Luego agregar notificaciones individualmente
+            // Luego agregar notificaciones usando updateOne para evitar problemas de cast
             for (const movementId of notifiedMovementIds) {
                 try {
-                    const movement = await JudicialMovement.findById(movementId);
-                    if (movement) {
-                        // Asegurarse de que notifications es un array
-                        if (!Array.isArray(movement.notifications)) {
-                            movement.notifications = [];
+                    // Usar updateOne con $push para agregar la notificación de forma atómica
+                    const updateResult = await JudicialMovement.updateOne(
+                        { _id: movementId },
+                        { 
+                            $push: { 
+                                notifications: {
+                                    date: new Date(),
+                                    type: 'email',
+                                    success: emailStatus === 'sent',
+                                    details: emailStatus === 'sent' 
+                                        ? `Notificación enviada a ${user.email}`
+                                        : `Error enviando notificación: ${failureReason}`
+                                }
+                            }
                         }
-                        
-                        // Crear el objeto de notificación
-                        const notificationEntry = {
-                            date: new Date(),
-                            type: 'email',
-                            success: emailStatus === 'sent',
-                            details: emailStatus === 'sent' 
-                                ? `Notificación enviada a ${user.email}`
-                                : `Error enviando notificación: ${failureReason}`
-                        };
-                        
-                        // Agregar la notificación
-                        movement.notifications.push(notificationEntry);
-                        
-                        // Guardar el documento
-                        await movement.save();
+                    );
+                    
+                    if (updateResult.modifiedCount > 0) {
                         logger.info(`Notificación agregada a movimiento ${movementId}`);
+                    } else {
+                        logger.warn(`No se pudo agregar notificación a movimiento ${movementId}`);
                     }
                 } catch (err) {
                     logger.error(`Error agregando notificación a ${movementId}: ${err.message || err}`);
@@ -1275,21 +1273,20 @@ async function sendJudicialMovementNotifications({
                     // Actualizar notificaciones en los movimientos para indicar que se enviaron por browser
                     for (const movementId of notifiedMovementIds) {
                         try {
-                            const movement = await JudicialMovement.findById(movementId);
-                            if (movement) {
-                                // Asegurarse de que notifications es un array
-                                if (!Array.isArray(movement.notifications)) {
-                                    movement.notifications = [];
+                            // Usar updateOne para agregar la notificación de browser
+                            await JudicialMovement.updateOne(
+                                { _id: movementId },
+                                {
+                                    $push: {
+                                        notifications: {
+                                            date: new Date(),
+                                            type: 'browser',
+                                            success: true,
+                                            details: 'Alerta creada en el navegador'
+                                        }
+                                    }
                                 }
-                                
-                                movement.notifications.push({
-                                    date: new Date(),
-                                    type: 'browser',
-                                    success: true,
-                                    details: 'Alerta creada en el navegador'
-                                });
-                                await movement.save();
-                            }
+                            );
                         } catch (err) {
                             logger.error(`Error agregando notificación browser a ${movementId}: ${err.message}`);
                         }
