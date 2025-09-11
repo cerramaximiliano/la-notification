@@ -97,14 +97,23 @@ function setupCronJobs() {
   });
   
   // Trabajo para limpiar los logs semanalmente (domingo a las 2:00 AM)
-  logger.info('Configurando trabajo de limpieza de logs: 0 2 * * 0');
-  cron.schedule('0 2 * * 0', async () => {
-    logger.info('Ejecutando trabajo de limpieza de logs');
+  const cleanupCron = process.env.CLEANUP_CRON || '0 2 * * 0'; // Domingos a las 2 AM por defecto
+  logger.info(`Configurando trabajo de limpieza completa: ${cleanupCron}`);
+  
+  // Importar la nueva función de limpieza completa
+  const { comprehensiveCleanupJob } = require('../cron/cleanupJobs');
+  
+  cron.schedule(cleanupCron, async () => {
+    logger.info('========================================');
+    logger.info('Ejecutando limpieza semanal programada');
+    logger.info('========================================');
     try {
-      const result = await clearLogsJob();
-      logger.info(`Trabajo de limpieza de logs completado: ${result.filesCleared} archivos limpiados`);
+      const result = await comprehensiveCleanupJob();
+      logger.info(`Limpieza semanal completada exitosamente`);
+      logger.info(`Total eliminado: ${result.summary.totalDeleted} elementos`);
+      logger.info(`Espacio liberado: ${(result.summary.spaceSaved / 1024 / 1024).toFixed(2)} MB`);
     } catch (error) {
-      logger.error(`Error en trabajo de limpieza de logs: ${error.message}`);
+      logger.error(`Error en trabajo de limpieza semanal: ${error.message}`);
     }
   }, {
     scheduled: true,
