@@ -46,10 +46,10 @@ const judicialMovementSchema = new mongoose.Schema({
   
   // Historial de intentos de notificación
   notifications: [{
-    date: Date,
-    type: String, // email, browser
-    success: Boolean,
-    details: String
+    date: { type: Date, required: true },
+    type: { type: String, required: true }, // email, browser
+    success: { type: Boolean, required: true },
+    details: { type: String, required: true }
   }],
   
   // Para evitar duplicados

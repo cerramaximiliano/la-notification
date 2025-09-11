@@ -1142,7 +1142,13 @@ async function sendJudicialMovementNotifications({
         // Recolectar todos los IDs de movimientos
         for (const [key, data] of Object.entries(movementsByExpediente)) {
             data.movements.forEach(movement => {
-                notifiedMovementIds.push(movement._id);
+                // Verificar que el _id existe y es válido
+                if (!movement._id) {
+                    logger.error(`Movimiento sin _id encontrado:`, JSON.stringify(movement));
+                } else {
+                    logger.info(`Agregando ID de movimiento: ${movement._id}, userId: ${movement.userId}`);
+                    notifiedMovementIds.push(movement._id);
+                }
             });
         }
 
@@ -1195,8 +1201,11 @@ async function sendJudicialMovementNotifications({
             // Luego agregar notificaciones individualmente
             for (const movementId of notifiedMovementIds) {
                 try {
+                    logger.info(`Intentando actualizar movimiento con ID: ${movementId}`);
                     const movement = await JudicialMovement.findById(movementId);
                     if (movement) {
+                        logger.info(`Movimiento encontrado - ID: ${movement._id}, userId: ${movement.userId}`);
+                        
                         // Asegurarse de que notifications es un array
                         if (!Array.isArray(movement.notifications)) {
                             movement.notifications = [];
@@ -1212,15 +1221,20 @@ async function sendJudicialMovementNotifications({
                                 : `Error enviando notificación: ${failureReason}`
                         };
                         
+                        logger.info(`Agregando notificación:`, JSON.stringify(notificationEntry));
+                        
                         // Agregar la notificación
                         movement.notifications.push(notificationEntry);
                         
                         // Guardar el documento
                         await movement.save();
-                        logger.info(`Notificación agregada a movimiento ${movementId}`);
+                        logger.info(`Notificación agregada exitosamente a movimiento ${movementId}`);
+                    } else {
+                        logger.warn(`Movimiento no encontrado con ID: ${movementId}`);
                     }
                 } catch (err) {
-                    logger.error(`Error agregando notificación a ${movementId}: ${err.message || err}`);
+                    logger.error(`Error agregando notificación al movimiento con ID ${movementId}: ${err.message || err}`);
+                    logger.error(`Tipo de error: ${err.name}`);
                     if (err.stack) {
                         logger.error(`Stack trace:`, err.stack);
                     }
