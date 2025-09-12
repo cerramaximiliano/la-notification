@@ -778,18 +778,10 @@ async function judicialMovementNotificationJob() {
       }
     }
 
-    // Limpiar movimientos antiguos (opcional: mantener historial de 30 días)
-    const thirtyDaysAgo = moment().subtract(30, 'days').toDate();
-    const cleanupResult = await JudicialMovement.deleteMany({
-      notificationStatus: 'sent',
-      updatedAt: { $lt: thirtyDaysAgo }  // Usar fecha de actualización, no fecha del movimiento
-    });
-
     logger.info(`Trabajo de notificaciones de movimientos judiciales completado:`);
     logger.info(`- Total de notificaciones enviadas: ${totalNotifications}`);
     logger.info(`- Usuarios procesados exitosamente: ${totalSuccessful}`);
     logger.info(`- Usuarios con errores: ${totalFailed}`);
-    logger.info(`- Movimientos antiguos eliminados: ${cleanupResult.deletedCount}`);
 
   } catch (error) {
     logger.error(`Error crítico en trabajo de notificaciones judiciales: ${error.message}`, error);
