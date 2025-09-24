@@ -281,7 +281,7 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
 });
 
 // Índices
-JudicialNotificationConfigSchema.index({ configKey: 1 }, { unique: true });
+// No es necesario índice para configKey ya que tiene unique: true en la definición del campo
 JudicialNotificationConfigSchema.index({ 'status.enabled': 1 });
 JudicialNotificationConfigSchema.index({ 'status.mode': 1 });
 
