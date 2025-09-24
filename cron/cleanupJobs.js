@@ -11,18 +11,41 @@ const logger = require('../config/logger');
 const NotificationLog = require('../models/NotificationLog');
 const Alert = require('../models/Alert');
 const JudicialMovement = require('../models/JudicialMovement');
+const JudicialNotificationConfig = require('../models/Judicial-notification-config');
 const moment = require('moment');
 
 /**
- * Configuración de retención de logs (en días)
+ * Obtiene la configuración de retención de logs
+ * Primero intenta obtenerla de la base de datos, si no usa variables de entorno
  */
-const LOG_RETENTION_CONFIG = {
-  notificationLogs: parseInt(process.env.NOTIFICATION_LOG_RETENTION_DAYS || '30'),
-  alerts: parseInt(process.env.ALERT_LOG_RETENTION_DAYS || '30'),
-  judicialMovements: parseInt(process.env.JUDICIAL_MOVEMENT_RETENTION_DAYS || '60'),
-  fileSystemLogs: parseInt(process.env.FILE_LOG_RETENTION_DAYS || '7'),
-  pm2Logs: parseInt(process.env.PM2_LOG_RETENTION_DAYS || '7')
-};
+async function getRetentionConfig() {
+  try {
+    const dbConfig = await JudicialNotificationConfig.getConfig();
+    
+    if (dbConfig && dbConfig.dataRetention) {
+      return {
+        notificationLogs: dbConfig.dataRetention.notificationLogRetentionDays || parseInt(process.env.NOTIFICATION_LOG_RETENTION_DAYS || '30'),
+        alerts: dbConfig.dataRetention.alertRetentionDays || parseInt(process.env.ALERT_LOG_RETENTION_DAYS || '30'),
+        judicialMovements: dbConfig.dataRetention.judicialMovementRetentionDays || parseInt(process.env.JUDICIAL_MOVEMENT_RETENTION_DAYS || '60'),
+        fileSystemLogs: parseInt(process.env.FILE_LOG_RETENTION_DAYS || '7'),
+        pm2Logs: parseInt(process.env.PM2_LOG_RETENTION_DAYS || '7'),
+        autoCleanupEnabled: dbConfig.dataRetention.autoCleanupEnabled !== false
+      };
+    }
+  } catch (error) {
+    logger.warn(`No se pudo obtener configuración de BD, usando valores por defecto: ${error.message}`);
+  }
+  
+  // Fallback a variables de entorno
+  return {
+    notificationLogs: parseInt(process.env.NOTIFICATION_LOG_RETENTION_DAYS || '30'),
+    alerts: parseInt(process.env.ALERT_LOG_RETENTION_DAYS || '30'),
+    judicialMovements: parseInt(process.env.JUDICIAL_MOVEMENT_RETENTION_DAYS || '60'),
+    fileSystemLogs: parseInt(process.env.FILE_LOG_RETENTION_DAYS || '7'),
+    pm2Logs: parseInt(process.env.PM2_LOG_RETENTION_DAYS || '7'),
+    autoCleanupEnabled: true
+  };
+}
 
 /**
  * Limpia logs antiguos de la base de datos MongoDB
@@ -36,31 +59,40 @@ async function cleanMongoDBLogs() {
   };
 
   try {
+    // Obtener configuración de retención
+    const retentionConfig = await getRetentionConfig();
+    
+    // Verificar si la limpieza automática está habilitada
+    if (!retentionConfig.autoCleanupEnabled) {
+      logger.info('Limpieza automática deshabilitada en la configuración');
+      return results;
+    }
+
     // Limpiar NotificationLogs antiguos
-    const notificationCutoff = moment().subtract(LOG_RETENTION_CONFIG.notificationLogs, 'days').toDate();
+    const notificationCutoff = moment().subtract(retentionConfig.notificationLogs, 'days').toDate();
     const notificationResult = await NotificationLog.deleteMany({
       sentAt: { $lt: notificationCutoff }
     });
     results.notificationLogs = notificationResult.deletedCount;
-    logger.info(`Eliminados ${results.notificationLogs} logs de notificaciones antiguos (más de ${LOG_RETENTION_CONFIG.notificationLogs} días)`);
+    logger.info(`Eliminados ${results.notificationLogs} logs de notificaciones antiguos (más de ${retentionConfig.notificationLogs} días)`);
 
     // Limpiar Alertas entregadas antiguos
-    const alertCutoff = moment().subtract(LOG_RETENTION_CONFIG.alerts, 'days').toDate();
+    const alertCutoff = moment().subtract(retentionConfig.alerts, 'days').toDate();
     const alertResult = await Alert.deleteMany({
       status: 'delivered',
       deliveredAt: { $lt: alertCutoff }
     });
     results.alerts = alertResult.deletedCount;
-    logger.info(`Eliminadas ${results.alerts} alertas entregadas antiguas (más de ${LOG_RETENTION_CONFIG.alerts} días)`);
+    logger.info(`Eliminadas ${results.alerts} alertas entregadas antiguas (más de ${retentionConfig.alerts} días)`);
 
     // Limpiar movimientos judiciales procesados antiguos
-    const judicialCutoff = moment().subtract(LOG_RETENTION_CONFIG.judicialMovements, 'days').toDate();
+    const judicialCutoff = moment().subtract(retentionConfig.judicialMovements, 'days').toDate();
     const judicialResult = await JudicialMovement.deleteMany({
       notificationStatus: 'sent',
       updatedAt: { $lt: judicialCutoff }
     });
     results.judicialMovements = judicialResult.deletedCount;
-    logger.info(`Eliminados ${results.judicialMovements} movimientos judiciales procesados (más de ${LOG_RETENTION_CONFIG.judicialMovements} días)`);
+    logger.info(`Eliminados ${results.judicialMovements} movimientos judiciales procesados (más de ${retentionConfig.judicialMovements} días)`);
 
   } catch (error) {
     logger.error(`Error limpiando logs de MongoDB: ${error.message}`);
@@ -85,13 +117,16 @@ async function cleanFileSystemLogs() {
   };
 
   try {
+    // Obtener configuración de retención
+    const retentionConfig = await getRetentionConfig();
+    
     if (!fs.existsSync(logDir)) {
       logger.warn(`Directorio de logs no existe: ${logDir}`);
       return results;
     }
 
     const files = fs.readdirSync(logDir);
-    const cutoffDate = moment().subtract(LOG_RETENTION_CONFIG.fileSystemLogs, 'days').toDate();
+    const cutoffDate = moment().subtract(retentionConfig.fileSystemLogs, 'days').toDate();
 
     for (const file of files) {
       const filePath = path.join(logDir, file);
@@ -366,5 +401,5 @@ module.exports = {
   cleanMongoDBLogs,
   cleanFileSystemLogs,
   cleanPM2Logs,
-  LOG_RETENTION_CONFIG
+  getRetentionConfig
 };
