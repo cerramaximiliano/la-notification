@@ -67,8 +67,18 @@ judicialMovementSchema.index({ userId: 1, 'movimiento.fecha': 1, notificationSta
 judicialMovementSchema.index({ 'notificationSettings.notifyAt': 1, notificationStatus: 1 });
 
 // Método para generar clave única
+// Nota: movimientoFecha debe estar en formato YYYY-MM-DD para consistencia
 judicialMovementSchema.statics.generateUniqueKey = function(userId, expedienteId, movimientoFecha, movimientoTipo) {
-  return `${userId}_${expedienteId}_${movimientoFecha}_${movimientoTipo}`;
+  // Normalizar fecha si viene como Date object o string ISO
+  let fechaNormalizada = movimientoFecha;
+  if (movimientoFecha instanceof Date) {
+    fechaNormalizada = movimientoFecha.toISOString().split('T')[0];
+  } else if (typeof movimientoFecha === 'string' && movimientoFecha.includes('T')) {
+    // Si es ISO string con hora, extraer solo la fecha
+    fechaNormalizada = movimientoFecha.split('T')[0];
+  }
+
+  return `${userId}_${expedienteId}_${fechaNormalizada}_${movimientoTipo}`;
 };
 
 module.exports = mongoose.model("JudicialMovement", judicialMovementSchema);
