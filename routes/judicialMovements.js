@@ -82,12 +82,13 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
           tipo: movimiento.tipo
         };
 
-        // Generar clave única para evitar duplicados (usando fecha normalizada)
+        // Generar clave única para evitar duplicados (usando fecha normalizada y hash del detalle)
         const uniqueKey = JudicialMovement.generateUniqueKey(
           userId,
           expediente.id,
           fechaNormalizada,
-          movimiento.tipo
+          movimiento.tipo,
+          movimiento.detalle
         );
 
         logger.info(`Procesando movimiento - userId: ${userId}, expediente: ${expediente.id}, fecha: ${fechaNormalizada}, tipo: ${movimiento.tipo}, uniqueKey: ${uniqueKey}`);
