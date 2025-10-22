@@ -25,6 +25,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     const results = {
       received: movements.length,
       created: 0,
+      updated: 0,
       duplicates: 0,
       errors: []
     };
@@ -91,10 +92,43 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
 
         logger.info(`Procesando movimiento - userId: ${userId}, expediente: ${expediente.id}, fecha: ${fechaNormalizada}, tipo: ${movimiento.tipo}, uniqueKey: ${uniqueKey}`);
 
-        // Crear o actualizar el movimiento judicial
-        const result = await JudicialMovement.findOneAndUpdate(
-          { uniqueKey },
-          {
+        // Verificar si el movimiento ya existe
+        const existingMovement = await JudicialMovement.findOne({ uniqueKey });
+
+        if (existingMovement) {
+          // El movimiento ya existe - actualizarlo y resetearlo a pending
+          logger.info(`Movimiento existente encontrado - _id: ${existingMovement._id}, estado anterior: ${existingMovement.notificationStatus}`);
+
+          existingMovement.expediente = {
+            id: expediente.id,
+            number: expediente.number,
+            year: expediente.year,
+            fuero: expediente.fuero,
+            caratula: expediente.caratula,
+            objeto: expediente.objeto
+          };
+          existingMovement.movimiento = {
+            fecha: new Date(movimiento.fecha),
+            tipo: movimiento.tipo,
+            detalle: movimiento.detalle,
+            url: movimiento.url
+          };
+          existingMovement.notificationSettings = {
+            notifyAt,
+            channels: ['email', 'browser']
+          };
+          // IMPORTANTE: Resetear a pending para que se notifique nuevamente
+          existingMovement.notificationStatus = 'pending';
+          // Limpiar notificaciones anteriores
+          existingMovement.notifications = [];
+
+          await existingMovement.save();
+
+          logger.info(`Movimiento actualizado y reseteado a pending - uniqueKey: ${uniqueKey}, _id: ${existingMovement._id}`);
+          results.updated++;
+        } else {
+          // Movimiento nuevo - crearlo
+          const newMovement = await JudicialMovement.create({
             userId,
             expediente: {
               id: expediente.id,
@@ -114,17 +148,13 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               notifyAt,
               channels: ['email', 'browser']
             },
-            uniqueKey
-          },
-          {
-            upsert: true,
-            new: true,
-            setDefaultsOnInsert: true
-          }
-        );
+            uniqueKey,
+            notificationStatus: 'pending'
+          });
 
-        logger.info(`Movimiento creado/actualizado exitosamente - uniqueKey: ${uniqueKey}, _id: ${result._id}`);
-        results.created++;
+          logger.info(`Movimiento nuevo creado - uniqueKey: ${uniqueKey}, _id: ${newMovement._id}`);
+          results.created++;
+        }
       } catch (error) {
         if (error.code === 11000) {
           // Error de duplicado
@@ -155,16 +185,24 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       }
     }
 
-    logger.info(`Movimientos procesados: ${results.created} creados, ${results.duplicates} duplicados, ${results.errors.length} errores`);
+    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.errors.length} errores`);
 
     if (results.errors.length > 0) {
       logger.error(`Se encontraron ${results.errors.length} errores procesando movimientos. Ver detalles arriba.`);
     }
 
+    const warnings = [];
+    if (results.errors.length > 0) {
+      warnings.push(`${results.errors.length} movimientos no pudieron ser procesados. Ver campo 'errors' para detalles.`);
+    }
+    if (results.updated > 0) {
+      warnings.push(`${results.updated} movimientos ya existían y fueron reseteados a 'pending' para re-notificación.`);
+    }
+
     res.json({
       success: true,
       results,
-      warning: results.errors.length > 0 ? `${results.errors.length} movimientos no pudieron ser procesados. Ver campo 'errors' para detalles.` : null
+      warnings: warnings.length > 0 ? warnings : null
     });
 
   } catch (error) {
