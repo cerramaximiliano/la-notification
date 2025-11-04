@@ -295,6 +295,13 @@ JudicialNotificationConfigSchema.methods.getNotificationTime = function() {
         0,
         0
     );
+
+    // Si la hora configurada ya pasó hoy, notificar inmediatamente
+    // (en la próxima ejecución del cron)
+    if (notificationTime < now) {
+        return now;
+    }
+
     return notificationTime;
 };
 

@@ -21,7 +21,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     }
 
     logger.info(`Recibiendo ${movements.length} movimientos judiciales para notificar`);
-    
+
     const results = {
       received: movements.length,
       created: 0,
@@ -30,9 +30,17 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       errors: []
     };
 
-    // Hora de notificación por defecto: 9:00 AM
+    // Hora de notificación: usar la recibida o por defecto 9:00 AM
     const defaultNotifyTime = moment().hour(9).minute(0).second(0);
-    const notifyAt = notificationTime ? moment(notificationTime).toDate() : defaultNotifyTime.toDate();
+    let notifyAt = notificationTime ? moment(notificationTime).toDate() : defaultNotifyTime.toDate();
+
+    // Si el notifyAt está en el pasado, usar el momento actual
+    // para que se notifique en la próxima ejecución del cron
+    const now = new Date();
+    if (notifyAt < now) {
+      logger.info(`⏰ Hora de notificación ${notifyAt.toISOString()} ya pasó, usando hora actual ${now.toISOString()}`);
+      notifyAt = now;
+    }
 
     for (const movement of movements) {
       let movementInfo = null; // Para logging de errores
