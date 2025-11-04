@@ -6,7 +6,6 @@ const logger = require("./config/logger");
 const http = require('http');
 const socketIO = require('socket.io');
 const cookieParser = require('cookie-parser');
-const chalk = require('chalk');
 
 const app = express();
 const PORT = process.env.PORT_NOTIFICATIONS || 3004;
@@ -45,10 +44,6 @@ app.use(cookieParser());
 
 
 app.use((req, res, next) => {
-    // Colorear log específico para la ruta de webhook de movimientos judiciales
-    if (req.method === 'POST' && req.url === '/api/judicial-movements/webhook/daily-movements') {
-        console.log(chalk.bgCyan.bold.black(`${req.method} ${req.url}`));
-    }
     logger.info(`${req.method} ${req.url}`);
     next();
 });

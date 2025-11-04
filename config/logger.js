@@ -1,11 +1,19 @@
 // utils/logger.js
 const winston = require("winston");
 const { combine, timestamp, printf, colorize, errors } = winston.format;
+const chalk = require("chalk");
 require("dotenv").config();
 
-// Configuración del formato de log
+// Configuración del formato de log con resaltado especial para webhook
 const logFormat = printf(({ level, message, timestamp, stack }) => {
-    return `${timestamp} ${level}: ${stack || message}`;
+    const baseMessage = `${timestamp} ${level}: ${stack || message}`;
+
+    // Colorear específicamente el log del webhook de movimientos judiciales
+    if (message && message.includes('POST /api/judicial-movements/webhook/daily-movements')) {
+        return chalk.bgCyan.bold.black(baseMessage);
+    }
+
+    return baseMessage;
 });
 
 const logger = winston.createLogger({
