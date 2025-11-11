@@ -3,19 +3,25 @@ const logger = require('../config/logger');
 
 /**
  * Procesa un template reemplazando las variables con los valores proporcionados
- * @param {string} template - String del template con variables {{variable}}
+ * @param {string} template - String del template con variables {{variable}} o ${variable}
  * @param {Object} data - Objeto con los valores para reemplazar
  * @returns {string} - Template procesado
  */
 function processTemplate(template, data) {
   let processed = template;
-  
+
   // Reemplazar cada variable en el template
   Object.keys(data).forEach(key => {
-    const regex = new RegExp(`{{${key}}}`, 'g');
-    processed = processed.replace(regex, data[key] || '');
+    // Reemplazar formato {{variable}}
+    const regexDoubleBraces = new RegExp(`{{${key}}}`, 'g');
+    processed = processed.replace(regexDoubleBraces, data[key] || '');
+
+    // Reemplazar formato ${variable}
+    // Escapamos el $ para la expresión regular
+    const regexDollarBraces = new RegExp(`\\$\\{${key}\\}`, 'g');
+    processed = processed.replace(regexDollarBraces, data[key] || '');
   });
-  
+
   return processed;
 }
 
