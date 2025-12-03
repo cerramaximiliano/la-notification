@@ -200,11 +200,11 @@ async function taskNotificationJob() {
     const defaultDaysInAdvance = parseInt(process.env.DEFAULT_DAYS_IN_ADVANCE) || 5;
     logger.info(`Valor por defecto para notificar tareas: ${defaultDaysInAdvance} días de anticipación`);
 
-    // Obtener todos los usuarios que tienen habilitadas las notificaciones
-    // de cualquier tipo (email, navegador o ambas)
+    // Obtener todos los usuarios que tienen habilitadas las notificaciones de tareas
+    // Se notifica cuando taskExpiration no sea explícitamente false
     const users = await User.find({
       $and: [
-        { 'preferences.notifications.user.expiration': { $ne: false } },
+        { 'preferences.notifications.user.taskExpiration': { $ne: false } },
         {
           $or: [
             { 'preferences.notifications.channels.email': { $ne: false } },
@@ -231,11 +231,11 @@ async function taskNotificationJob() {
         const preferences = user.preferences?.notifications || {};
         const channels = preferences.channels || {};
 
-        // Obtenemos la configuración específica de este usuario
-        const userExpirationSettings = preferences.user?.expirationSettings || {};
-        const userDaysInAdvance = userExpirationSettings.daysInAdvance || defaultDaysInAdvance;
+        // Obtenemos la configuración específica de tareas de este usuario
+        const userTaskExpirationSettings = preferences.user?.taskExpirationSettings || {};
+        const userDaysInAdvance = userTaskExpirationSettings.daysInAdvance || defaultDaysInAdvance;
 
-        logger.debug(`Usuario ${user.email} tiene configuración de días: ${userDaysInAdvance}`);
+        logger.debug(`Usuario ${user.email} tiene configuración de días para tareas: ${userDaysInAdvance}`);
 
         let userReceivedNotification = false;
 

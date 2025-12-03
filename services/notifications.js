@@ -667,9 +667,11 @@ async function sendTaskNotifications({
         const preferences = user.preferences || {};
         const notifications = preferences.notifications || {};
         const emailEnabled = notifications.channels && notifications.channels.email !== false;
-        const userNotificationsEnabled = notifications.user && notifications.user.expiration !== false;
 
-        if (!emailEnabled || !userNotificationsEnabled) {
+        // Para tareas, verificamos taskExpiration (se notifica cuando no sea explícitamente false)
+        const taskNotificationsEnabled = notifications.user && notifications.user.taskExpiration !== false;
+
+        if (!emailEnabled || !taskNotificationsEnabled) {
             return {
                 success: true,
                 statusCode: 200,
@@ -678,18 +680,18 @@ async function sendTaskNotifications({
             };
         }
 
-        // Obtener la configuración global de notificaciones de tareas del usuario
-        const userExpirationSettings =
+        // Obtener la configuración específica de notificaciones de tareas del usuario
+        const userTaskExpirationSettings =
             notifications.user &&
-                notifications.user.expirationSettings ?
-                notifications.user.expirationSettings :
+                notifications.user.taskExpirationSettings ?
+                notifications.user.taskExpirationSettings :
                 { notifyOnceOnly: true, daysInAdvance: 5 };
 
         // Orden de prioridad para daysInAdvance:
         // 1. Parámetro explícito en la llamada a la función
-        // 2. Configuración global del usuario
+        // 2. Configuración de tareas del usuario
         // 3. Valor por defecto (5)
-        const globalDaysInAdvance = requestedDaysInAdvance || userExpirationSettings.daysInAdvance || 5;
+        const globalDaysInAdvance = requestedDaysInAdvance || userTaskExpirationSettings.daysInAdvance || 5;
 
         if (globalDaysInAdvance < 1) {
             return {
@@ -752,7 +754,7 @@ async function sendTaskNotifications({
             const notifyOnceOnly =
                 (task.notificationSettings && typeof task.notificationSettings.notifyOnceOnly === 'boolean') ?
                     task.notificationSettings.notifyOnceOnly :
-                    userExpirationSettings.notifyOnceOnly;
+                    userTaskExpirationSettings.notifyOnceOnly;
 
             // Si está configurada para notificar solo una vez y ya tiene notificaciones por email
             if (notifyOnceOnly &&
@@ -834,7 +836,7 @@ async function sendTaskNotifications({
         };
 
         // Inicializar la configuración de notificaciones para tareas sin ella,
-        // usando la configuración global del usuario
+        // usando la configuración de tareas del usuario
         await Task.updateMany(
             {
                 _id: { $in: notifiedTaskIds },
@@ -843,8 +845,8 @@ async function sendTaskNotifications({
             {
                 $set: {
                     notificationSettings: {
-                        notifyOnceOnly: userExpirationSettings.notifyOnceOnly,
-                        daysInAdvance: userExpirationSettings.daysInAdvance
+                        notifyOnceOnly: userTaskExpirationSettings.notifyOnceOnly,
+                        daysInAdvance: userTaskExpirationSettings.daysInAdvance
                     }
                 }
             }
