@@ -144,8 +144,8 @@ function setupCronJobs() {
   }
 
   // Trabajo para notificaciones de inactividad de carpetas (caducidad y prescripción)
-  // Se ejecuta a las 11:00 AM hora Argentina
-  const folderInactivityCron = process.env.NOTIFICATION_FOLDER_INACTIVITY_CRON || '0 11 * * *';
+  // Se ejecuta a las 12:00 PM hora Argentina
+  const folderInactivityCron = process.env.NOTIFICATION_FOLDER_INACTIVITY_CRON || '0 12 * * *';
 
   if (!cron.validate(folderInactivityCron)) {
     logger.error(`Expresión cron inválida para notificaciones de inactividad de carpetas: ${folderInactivityCron}`);
