@@ -51,6 +51,22 @@ function processMovementReportData(summary) {
 }
 
 /**
+ * Procesa datos para el informe de notificaciones de inactividad de carpetas
+ * @param {Object} summary - Resumen de notificaciones procesadas
+ * @returns {Object} - Variables procesadas para el template
+ */
+function processFolderInactivityReportData(summary) {
+  return {
+    usersProcessed: summary.usersProcessed || 0,
+    usersNotified: summary.usersNotified || 0,
+    caducityNotifications: summary.caducityNotificationsSent || 0,
+    prescriptionNotifications: summary.prescriptionNotificationsSent || 0,
+    totalNotifications: summary.totalNotifications || 0,
+    timestamp: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+  };
+}
+
+/**
  * Procesa datos para el informe de limpieza de logs
  * @param {Object} data - Datos de la limpieza de logs
  * @returns {Object} - Variables procesadas para el template
@@ -89,5 +105,6 @@ module.exports = {
   processCalendarReportData,
   processTaskReportData,
   processMovementReportData,
+  processFolderInactivityReportData,
   processLogCleanupReportData
 };

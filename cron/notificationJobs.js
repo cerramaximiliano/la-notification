@@ -857,21 +857,16 @@ async function folderInactivityNotificationJob() {
     logger.info(`Trabajo de notificaciones de inactividad completado: ${JSON.stringify(summary)}`);
 
     // Si está configurado, enviar email al administrador con el resumen
-    if (process.env.ADMIN_EMAIL && summary.totalNotifications > 0) {
+    // Esta funcionalidad es opcional y se puede integrar con el sistema centralizado
+    if (process.env.ADMIN_EMAIL) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
 
+        // Usar template de base de datos
+        const { processFolderInactivityReportData } = require('../services/adminReportProcessor');
         const { getProcessedTemplate } = require('../services/templateProcessor');
 
-        const templateVariables = {
-          usersProcessed: summary.usersProcessed,
-          usersNotified: summary.usersNotified,
-          caducityNotifications: summary.caducityNotificationsSent,
-          prescriptionNotifications: summary.prescriptionNotificationsSent,
-          totalNotifications: summary.totalNotifications,
-          timestamp: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
-        };
-
+        const templateVariables = processFolderInactivityReportData(summary);
         const processedTemplate = await getProcessedTemplate('administration', 'folder-inactivity-report', templateVariables);
 
         await sendEmail(
