@@ -8,6 +8,7 @@ const {
   sendTaskNotifications,
   sendMovementNotifications,
   sendJudicialMovementNotifications,
+  sendFolderInactivityNotifications,
 } = require('../services/notifications');
 
 
@@ -20,6 +21,7 @@ const Movement = require('../models/Movement');
 const Alert = require("../models/Alert");
 const JudicialMovement = require('../models/JudicialMovement');
 const NotificationLog = require('../models/NotificationLog');
+const Folder = require('../models/Folder');
 const logger = require('../config/logger');
 const { sendTaskBrowserAlerts, sendMovementBrowserAlerts, sendCalendarBrowserAlerts } = require('../services/browser');
 
@@ -788,10 +790,118 @@ async function judicialMovementNotificationJob() {
   }
 }
 
+/**
+ * Notifica a todos los usuarios de sus carpetas próximas a caducidad o prescripción por inactividad
+ */
+async function folderInactivityNotificationJob() {
+  try {
+    logger.info('Iniciando trabajo de notificaciones de inactividad de carpetas');
+
+    // Obtener todos los usuarios que tienen habilitadas las notificaciones de inactividad
+    // Se notifica cuando inactivity no sea explícitamente false
+    const users = await User.find({
+      $and: [
+        { 'preferences.notifications.user.inactivity': { $ne: false } },
+        { 'preferences.notifications.channels.email': { $ne: false } }
+      ]
+    });
+
+    logger.info(`Se encontraron ${users.length} usuarios con notificaciones de inactividad habilitadas`);
+
+    // Contadores para el informe final
+    let totalCaducityNotifications = 0;
+    let totalPrescriptionNotifications = 0;
+    let totalSuccessful = 0;
+    let totalFailed = 0;
+    let totalUsersWithNotifications = 0;
+
+    // Procesar cada usuario
+    for (const user of users) {
+      try {
+        logger.debug(`Procesando notificaciones de inactividad para el usuario ${user._id} (${user.email})`);
+
+        const result = await sendFolderInactivityNotifications({
+          userId: user._id,
+          models: { User, Folder },
+          utilities: { sendEmail, logger, moment }
+        });
+
+        if (result.notified) {
+          totalCaducityNotifications += result.caducity?.count || 0;
+          totalPrescriptionNotifications += result.prescription?.count || 0;
+          totalSuccessful++;
+          totalUsersWithNotifications++;
+          logger.info(`Notificaciones de inactividad enviadas a ${user.email}: ${result.caducity?.count || 0} caducidad, ${result.prescription?.count || 0} prescripción`);
+        } else {
+          logger.debug(`No se enviaron notificaciones de inactividad a ${user.email}: ${result.message}`);
+        }
+
+      } catch (userError) {
+        totalFailed++;
+        logger.error(`Error al procesar notificaciones de inactividad para usuario ${user._id}: ${userError.message}`);
+      }
+    }
+
+    // Resumen final
+    const summary = {
+      success: true,
+      usersProcessed: users.length,
+      usersNotified: totalUsersWithNotifications,
+      caducityNotificationsSent: totalCaducityNotifications,
+      prescriptionNotificationsSent: totalPrescriptionNotifications,
+      totalNotifications: totalCaducityNotifications + totalPrescriptionNotifications,
+      totalSuccessfulProcesses: totalSuccessful,
+      totalFailedProcesses: totalFailed
+    };
+
+    logger.info(`Trabajo de notificaciones de inactividad completado: ${JSON.stringify(summary)}`);
+
+    // Si está configurado, enviar email al administrador con el resumen
+    if (process.env.ADMIN_EMAIL && summary.totalNotifications > 0) {
+      try {
+        const adminEmail = process.env.ADMIN_EMAIL;
+
+        const { getProcessedTemplate } = require('../services/templateProcessor');
+
+        const templateVariables = {
+          usersProcessed: summary.usersProcessed,
+          usersNotified: summary.usersNotified,
+          caducityNotifications: summary.caducityNotificationsSent,
+          prescriptionNotifications: summary.prescriptionNotificationsSent,
+          totalNotifications: summary.totalNotifications,
+          timestamp: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+        };
+
+        const processedTemplate = await getProcessedTemplate('administration', 'folder-inactivity-report', templateVariables);
+
+        await sendEmail(
+          adminEmail,
+          processedTemplate.subject,
+          processedTemplate.html,
+          processedTemplate.text
+        );
+        logger.info(`Informe de notificaciones de inactividad enviado al administrador: ${adminEmail}`);
+      } catch (emailError) {
+        logger.error(`Error al enviar informe de inactividad al administrador: ${emailError.message}`);
+      }
+    }
+
+    return summary;
+
+  } catch (error) {
+    logger.error(`Error general en el trabajo de notificaciones de inactividad: ${error.message}`);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 module.exports = {
   calendarNotificationJob,
   taskNotificationJob,
   movementNotificationJob,
   clearLogsJob,
-  judicialMovementNotificationJob
+  judicialMovementNotificationJob,
+  folderInactivityNotificationJob
 };

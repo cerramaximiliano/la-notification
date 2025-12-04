@@ -4,7 +4,8 @@ const {
   taskNotificationJob,
   movementNotificationJob,
   clearLogsJob,
-  judicialMovementNotificationJob
+  judicialMovementNotificationJob,
+  folderInactivityNotificationJob
 } = require('../cron/notificationJobs');
 const { sendEmail } = require('../services/email');
 const logger = require('./logger');
@@ -135,6 +136,28 @@ function setupCronJobs() {
         logger.info('Trabajo de notificaciones de movimientos judiciales completado');
       } catch (error) {
         logger.error(`Error en trabajo de notificaciones judiciales: ${error.message}`);
+      }
+    }, {
+      scheduled: true,
+      timezone: 'America/Argentina/Buenos_Aires'
+    });
+  }
+
+  // Trabajo para notificaciones de inactividad de carpetas (caducidad y prescripción)
+  // Se ejecuta a las 11:00 AM hora Argentina
+  const folderInactivityCron = process.env.NOTIFICATION_FOLDER_INACTIVITY_CRON || '0 11 * * *';
+
+  if (!cron.validate(folderInactivityCron)) {
+    logger.error(`Expresión cron inválida para notificaciones de inactividad de carpetas: ${folderInactivityCron}`);
+  } else {
+    logger.info(`Configurando notificaciones de inactividad de carpetas: ${folderInactivityCron}`);
+    cron.schedule(folderInactivityCron, async () => {
+      logger.info('Ejecutando trabajo de notificaciones de inactividad de carpetas');
+      try {
+        await folderInactivityNotificationJob();
+        logger.info('Trabajo de notificaciones de inactividad de carpetas completado');
+      } catch (error) {
+        logger.error(`Error en trabajo de notificaciones de inactividad: ${error.message}`);
       }
     }, {
       scheduled: true,

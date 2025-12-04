@@ -1341,9 +1341,260 @@ async function sendJudicialMovementNotifications({
     }
 };
 
+/**
+ * Envía notificaciones de inactividad de folders (caducidad y prescripción)
+ * @param {Object} params - Parámetros de la función
+ * @returns {Object} - Resultado de la operación
+ */
+async function sendFolderInactivityNotifications({
+    userId: requestUserId,
+    user: reqUser,
+    models: { User, Folder },
+    utilities: { sendEmail, logger, moment }
+}) {
+    try {
+        // Obtener userId
+        const userId = requestUserId || (reqUser && reqUser._id);
+        if (!userId) {
+            return {
+                success: false,
+                statusCode: 400,
+                message: 'Se requiere un ID de usuario'
+            };
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return {
+                success: false,
+                statusCode: 404,
+                message: 'Usuario no encontrado'
+            };
+        }
+
+        // Verificar preferencias de notificación
+        const preferences = user.preferences || {};
+        const notifications = preferences.notifications || {};
+        const emailEnabled = notifications.channels && notifications.channels.email !== false;
+
+        // Verificar si inactivity está habilitado (no debe ser false)
+        const inactivityEnabled = notifications.user && notifications.user.inactivity !== false;
+
+        if (!emailEnabled || !inactivityEnabled) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'Las notificaciones de inactividad no están habilitadas para este usuario',
+                notified: false
+            };
+        }
+
+        // Obtener configuración de inactividad del usuario
+        const inactivitySettings = notifications.user?.inactivitySettings || {
+            daysInAdvance: 5,
+            caducityDays: 180,
+            prescriptionDays: 730,
+            notifyOnceOnly: true
+        };
+
+        const { daysInAdvance, caducityDays, prescriptionDays, notifyOnceOnly } = inactivitySettings;
+
+        // Buscar folders del usuario que no estén archivados ni cerrados
+        const folders = await Folder.find({
+            userId: userId,
+            archived: false,
+            status: { $ne: 'Cerrada' }
+        });
+
+        if (folders.length === 0) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'No hay folders activos para este usuario',
+                notified: false
+            };
+        }
+
+        // Importar funciones del template processor
+        const { getMostRecentDate, calculateDaysRemaining, processCaducityData, processPrescriptionData } = require('./folderTemplateProcessor');
+        const { getProcessedTemplate } = require('./templateProcessor');
+
+        const today = moment.utc().startOf('day');
+        const todayDateString = today.format('YYYY-MM-DD');
+
+        // Arrays para almacenar folders con alertas
+        const caducityFolders = [];
+        const prescriptionFolders = [];
+
+        // Evaluar cada folder
+        for (const folder of folders) {
+            const lastActivityDate = getMostRecentDate(folder);
+
+            if (!lastActivityDate) {
+                logger.debug(`Folder ${folder._id} no tiene fechas de actividad, omitiendo`);
+                continue;
+            }
+
+            // Calcular días restantes para caducidad y prescripción
+            const daysUntilCaducity = calculateDaysRemaining(lastActivityDate, caducityDays);
+            const daysUntilPrescription = calculateDaysRemaining(lastActivityDate, prescriptionDays);
+
+            // Lógica para determinar si debe notificarse
+            // notifyOnceOnly = true: notificar solo cuando días restantes === daysInAdvance
+            // notifyOnceOnly = false: notificar cuando días restantes <= daysInAdvance y > 0, o === 0
+
+            // Verificar alerta de caducidad
+            let shouldNotifyCaducity = false;
+            if (notifyOnceOnly) {
+                // Solo notificar exactamente cuando faltan daysInAdvance días
+                shouldNotifyCaducity = daysUntilCaducity === daysInAdvance;
+            } else {
+                // Notificar en todo el rango desde daysInAdvance hasta 0
+                shouldNotifyCaducity = daysUntilCaducity >= 0 && daysUntilCaducity <= daysInAdvance;
+            }
+
+            // Verificar si ya fue notificado hoy (para caducidad)
+            if (shouldNotifyCaducity && folder.notifications) {
+                const alreadyNotifiedToday = folder.notifications.some(n => {
+                    const notificationDate = n.date ? moment.utc(n.date).format('YYYY-MM-DD') : '';
+                    return n.type === 'email' && n.alertType === 'caducity' && notificationDate === todayDateString;
+                });
+                if (alreadyNotifiedToday) {
+                    shouldNotifyCaducity = false;
+                }
+            }
+
+            if (shouldNotifyCaducity) {
+                caducityFolders.push(folder);
+            }
+
+            // Verificar alerta de prescripción
+            let shouldNotifyPrescription = false;
+            if (notifyOnceOnly) {
+                shouldNotifyPrescription = daysUntilPrescription === daysInAdvance;
+            } else {
+                shouldNotifyPrescription = daysUntilPrescription >= 0 && daysUntilPrescription <= daysInAdvance;
+            }
+
+            // Verificar si ya fue notificado hoy (para prescripción)
+            if (shouldNotifyPrescription && folder.notifications) {
+                const alreadyNotifiedToday = folder.notifications.some(n => {
+                    const notificationDate = n.date ? moment.utc(n.date).format('YYYY-MM-DD') : '';
+                    return n.type === 'email' && n.alertType === 'prescription' && notificationDate === todayDateString;
+                });
+                if (alreadyNotifiedToday) {
+                    shouldNotifyPrescription = false;
+                }
+            }
+
+            if (shouldNotifyPrescription) {
+                prescriptionFolders.push(folder);
+            }
+        }
+
+        let caducityResult = { notified: false, count: 0 };
+        let prescriptionResult = { notified: false, count: 0 };
+
+        // Enviar notificación de caducidad si hay folders
+        if (caducityFolders.length > 0) {
+            try {
+                const templateVariables = processCaducityData(caducityFolders, user, inactivitySettings);
+                const processedTemplate = await getProcessedTemplate('notification', 'folder-caducity', templateVariables);
+
+                await sendEmail(user.email, processedTemplate.subject, processedTemplate.html, processedTemplate.text);
+
+                // Registrar notificación en cada folder
+                const notificationDetails = {
+                    date: new Date(),
+                    type: 'email',
+                    alertType: 'caducity',
+                    success: true,
+                    details: `Notificación de caducidad enviada a ${user.email}`
+                };
+
+                for (const folder of caducityFolders) {
+                    await Folder.updateOne(
+                        { _id: folder._id },
+                        { $push: { notifications: notificationDetails } }
+                    );
+                }
+
+                caducityResult = { notified: true, count: caducityFolders.length };
+                logger.info(`Notificación de caducidad enviada a ${user.email} para ${caducityFolders.length} carpetas`);
+
+            } catch (error) {
+                logger.error(`Error enviando notificación de caducidad a ${user.email}: ${error.message}`);
+            }
+        }
+
+        // Enviar notificación de prescripción si hay folders
+        if (prescriptionFolders.length > 0) {
+            try {
+                const templateVariables = processPrescriptionData(prescriptionFolders, user, inactivitySettings);
+                const processedTemplate = await getProcessedTemplate('notification', 'folder-prescription', templateVariables);
+
+                await sendEmail(user.email, processedTemplate.subject, processedTemplate.html, processedTemplate.text);
+
+                // Registrar notificación en cada folder
+                const notificationDetails = {
+                    date: new Date(),
+                    type: 'email',
+                    alertType: 'prescription',
+                    success: true,
+                    details: `Notificación de prescripción enviada a ${user.email}`
+                };
+
+                for (const folder of prescriptionFolders) {
+                    await Folder.updateOne(
+                        { _id: folder._id },
+                        { $push: { notifications: notificationDetails } }
+                    );
+                }
+
+                prescriptionResult = { notified: true, count: prescriptionFolders.length };
+                logger.info(`Notificación de prescripción enviada a ${user.email} para ${prescriptionFolders.length} carpetas`);
+
+            } catch (error) {
+                logger.error(`Error enviando notificación de prescripción a ${user.email}: ${error.message}`);
+            }
+        }
+
+        const totalNotified = caducityResult.count + prescriptionResult.count;
+
+        if (totalNotified === 0) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'No hay carpetas con alertas de inactividad para notificar',
+                notified: false
+            };
+        }
+
+        return {
+            success: true,
+            statusCode: 200,
+            message: `Notificaciones de inactividad enviadas: ${caducityResult.count} caducidad, ${prescriptionResult.count} prescripción`,
+            notified: true,
+            caducity: caducityResult,
+            prescription: prescriptionResult,
+            userId: userId
+        };
+
+    } catch (error) {
+        logger.error(`Error al enviar notificaciones de inactividad: ${error.message}`);
+        return {
+            success: false,
+            statusCode: 500,
+            message: 'Error al enviar notificaciones de inactividad',
+            error: error.message
+        };
+    }
+}
+
 module.exports = {
     sendCalendarNotifications,
     sendTaskNotifications,
     sendMovementNotifications,
     sendJudicialMovementNotifications,
+    sendFolderInactivityNotifications,
 };
