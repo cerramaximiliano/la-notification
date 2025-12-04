@@ -359,7 +359,31 @@ const FolderSchema = new Schema(
         type: String,
         required: false
       }
-    }
+    },
+    // Historial de notificaciones enviadas
+    notifications: [{
+      date: {
+        type: Date,
+        default: Date.now
+      },
+      type: {
+        type: String,
+        enum: ['email', 'browser'],
+        required: true
+      },
+      alertType: {
+        type: String,
+        enum: ['caducity', 'prescription'],
+        required: true
+      },
+      success: {
+        type: Boolean,
+        default: true
+      },
+      details: {
+        type: String
+      }
+    }]
   },
   {
     timestamps: true,
