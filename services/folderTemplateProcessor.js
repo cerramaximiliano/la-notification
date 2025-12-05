@@ -1,15 +1,23 @@
 const moment = require('moment');
 
 /**
- * Obtiene la fecha más reciente de actividad de un folder
+ * Obtiene la fecha de referencia para calcular inactividad de un folder
+ *
+ * REGLA: Si existe lastMovementDate, se usa SOLO esa fecha.
+ * Si no existe, se usa la fecha más reciente de las demás fechas disponibles.
+ *
  * @param {Object} folder - Documento del folder
- * @returns {Date|null} - Fecha más reciente o null si no hay fechas
+ * @returns {Date|null} - Fecha de referencia o null si no hay fechas
  */
 function getMostRecentDate(folder) {
+  // Si existe lastMovementDate, usar SOLO esa fecha
+  if (folder.lastMovementDate) {
+    return new Date(folder.lastMovementDate);
+  }
+
+  // Si no hay lastMovementDate, buscar la más reciente de las demás fechas
   const dates = [];
 
-  // Fechas del folder principal
-  if (folder.lastMovementDate) dates.push(new Date(folder.lastMovementDate));
   if (folder.initialDateFolder) dates.push(new Date(folder.initialDateFolder));
   if (folder.finalDateFolder) dates.push(new Date(folder.finalDateFolder));
 
@@ -21,7 +29,7 @@ function getMostRecentDate(folder) {
 
   if (dates.length === 0) return null;
 
-  // Retornar la fecha más reciente
+  // Retornar la fecha más reciente de las alternativas
   return dates.reduce((latest, current) => current > latest ? current : latest);
 }
 
