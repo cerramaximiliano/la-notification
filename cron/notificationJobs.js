@@ -10,6 +10,7 @@ const {
   sendJudicialMovementNotifications,
   sendFolderInactivityNotifications,
 } = require('../services/notifications');
+const { coordinateJudicialMovements } = require('../services/judicialMovementCoordinator');
 
 
 
@@ -703,12 +704,39 @@ function formatUptime(uptime) {
 /**
  * Procesa y envía notificaciones de movimientos judiciales
  * Este job busca movimientos pendientes que deben notificarse según su hora programada
+ *
+ * PASO 1: Coordinación - Crea documentos JudicialMovement faltantes para movimientos del día
+ * PASO 2: Notificación - Envía notificaciones para documentos con notifyAt <= ahora
  */
 async function judicialMovementNotificationJob() {
   try {
     logger.info('Iniciando trabajo de notificaciones de movimientos judiciales');
 
+    // PASO 1: COORDINACIÓN
+    // Crear documentos JudicialMovement faltantes para causas con movimientos del día
+    logger.info('[COORDINACIÓN] Buscando movimientos del día sin documentos de notificación...');
+    try {
+      const coordinationStats = await coordinateJudicialMovements({
+        models: { Folder, JudicialMovement }
+      });
+
+      if (coordinationStats.notificacionesCreadas > 0) {
+        logger.info(`[COORDINACIÓN] Se crearon ${coordinationStats.notificacionesCreadas} documentos de notificación faltantes`);
+      }
+      if (coordinationStats.notificacionesExistentes > 0) {
+        logger.debug(`[COORDINACIÓN] ${coordinationStats.notificacionesExistentes} documentos ya existían`);
+      }
+      if (coordinationStats.errores > 0) {
+        logger.warn(`[COORDINACIÓN] Se produjeron ${coordinationStats.errores} errores durante la coordinación`);
+      }
+    } catch (coordError) {
+      logger.error(`[COORDINACIÓN] Error en coordinación: ${coordError.message}`);
+      // Continuamos con las notificaciones aunque falle la coordinación
+    }
+
+    // PASO 2: NOTIFICACIÓN
     // Buscar todos los usuarios que tienen movimientos pendientes de notificar
+    logger.info('[NOTIFICACIÓN] Buscando movimientos pendientes de notificar...');
     const now = new Date();
     const pendingMovements = await JudicialMovement.aggregate([
       {
@@ -726,7 +754,7 @@ async function judicialMovementNotificationJob() {
       }
     ]);
 
-    logger.info(`Se encontraron ${pendingMovements.length} usuarios con movimientos judiciales pendientes`);
+    logger.info(`[NOTIFICACIÓN] Se encontraron ${pendingMovements.length} usuarios con movimientos judiciales pendientes`);
 
     let totalNotifications = 0;
     let totalSuccessful = 0;
@@ -780,10 +808,10 @@ async function judicialMovementNotificationJob() {
       }
     }
 
-    logger.info(`Trabajo de notificaciones de movimientos judiciales completado:`);
-    logger.info(`- Total de notificaciones enviadas: ${totalNotifications}`);
-    logger.info(`- Usuarios procesados exitosamente: ${totalSuccessful}`);
-    logger.info(`- Usuarios con errores: ${totalFailed}`);
+    logger.info(`[NOTIFICACIÓN] Trabajo de notificaciones de movimientos judiciales completado:`);
+    logger.info(`[NOTIFICACIÓN] - Total de notificaciones enviadas: ${totalNotifications}`);
+    logger.info(`[NOTIFICACIÓN] - Usuarios procesados exitosamente: ${totalSuccessful}`);
+    logger.info(`[NOTIFICACIÓN] - Usuarios con errores: ${totalFailed}`);
 
   } catch (error) {
     logger.error(`Error crítico en trabajo de notificaciones judiciales: ${error.message}`, error);

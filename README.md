@@ -7,6 +7,8 @@ Aplicación para el envío automatizado de notificaciones a usuarios mediante ta
 - Notificaciones automáticas de eventos de calendario
 - Notificaciones automáticas de tareas por vencer
 - Notificaciones automáticas de movimientos próximos a expirar
+- **Notificaciones de movimientos judiciales** con sistema de coordinación
+- Notificaciones de inactividad de carpetas (caducidad y prescripción)
 - Notificaciones push en tiempo real mediante WebSockets
 - Configuración personalizada por usuario
 - Respeta las preferencias de notificación de cada usuario
@@ -92,15 +94,21 @@ notification-cron-app/
 ├── services/              # Servicios de la aplicación
 │   ├── notifications.js   # Lógica de notificaciones
 │   ├── email.js           # Servicio de correo electrónico
-│   └── websocket.js       # Servicio de WebSocket para notificaciones push
+│   ├── websocket.js       # Servicio de WebSocket para notificaciones push
+│   └── judicialMovementCoordinator.js  # Coordinador de movimientos judiciales
 ├── cron/                  # Definición de trabajos cron
 │   └── notificationJobs.js # Implementación de trabajos
+├── scripts/               # Scripts de utilidad
+│   ├── coordinateJudicialNotifications.js  # Coordinación manual
+│   └── testJudicialMovementJob.js          # Prueba del job completo
 ├── client-example.js      # Ejemplo de cliente WebSocket para pruebas
-└── models/                # Modelos de datos (debes agregarlos)
+└── models/                # Modelos de datos
     ├── User.js            # Modelo de usuario
     ├── Event.js           # Modelo de evento
     ├── Task.js            # Modelo de tarea
     ├── Movement.js        # Modelo de movimiento
+    ├── JudicialMovement.js # Modelo de movimientos judiciales
+    ├── Folder.js          # Modelo de carpetas (vincula usuarios con causas)
     └── Alert.js           # Modelo de alertas y notificaciones
 ```
 
@@ -174,6 +182,130 @@ Se incluye un archivo `client-example.js` que muestra cómo implementar un clien
 ```bash
 node client-example.js
 ```
+
+## Notificaciones de Movimientos Judiciales
+
+El sistema incluye un módulo especializado para notificar a los usuarios sobre nuevos movimientos en sus causas judiciales vinculadas.
+
+### Arquitectura
+
+El proceso de notificaciones judiciales consta de dos pasos que se ejecutan cada 15 minutos:
+
+```
+judicialMovementNotificationJob (cada 15 minutos)
+│
+├── PASO 1: COORDINACIÓN
+│   ├── Buscar causas con fechaUltimoMovimiento = hoy
+│   ├── Filtrar movimientos del array que coincidan con la fecha
+│   ├── Obtener usuarios vinculados (vía colección Folders)
+│   ├── Verificar si ya existe documento JudicialMovement (uniqueKey)
+│   └── Crear documentos faltantes con notifyAt = 19:00 Argentina
+│
+└── PASO 2: NOTIFICACIÓN
+    ├── Buscar JudicialMovement con status='pending' y notifyAt <= ahora
+    ├── Agrupar por usuario
+    ├── Enviar email con todos los movimientos del usuario
+    └── Actualizar status a 'sent'
+```
+
+### Sistema de Coordinación
+
+El coordinador (`services/judicialMovementCoordinator.js`) resuelve el problema de documentos JudicialMovement que no se crean debido a errores en el proceso original (webhook).
+
+#### Funcionamiento
+
+1. **Búsqueda de causas**: Consulta las 11 colecciones de causas buscando `fechaUltimoMovimiento` del día actual
+2. **Filtrado de movimientos**: Para cada causa, filtra los movimientos cuya fecha coincida con el día
+3. **Vinculación de usuarios**: Obtiene los usuarios asociados a cada causa mediante la colección `Folders`
+4. **Deduplicación**: Genera un `uniqueKey` para evitar crear documentos duplicados
+5. **Creación**: Crea documentos `JudicialMovement` con `notificationStatus: 'pending'` y `notifyAt: 19:00`
+
+#### Colecciones de causas soportadas
+
+| Modelo | Colección | Fuero |
+|--------|-----------|-------|
+| CausasCivil | causas-civil | Civil |
+| CausasComercial | causas-comercial | Comercial |
+| CausasSegSoc | causas-segsocial | Seguridad Social |
+| CausasTrabajo | causas-trabajo | Trabajo |
+| CausasCAF | causas_caf | Contencioso Administrativo Federal |
+| CausasCCF | causas_ccf | Civil y Comercial Federal |
+| CausasCNE | causas_cne | Electoral |
+| CausasCPE | causas_cpe | Penal Económico |
+| CausasCFP | causas_cfp | Criminal y Correccional Federal |
+| CausasCCC | causas_ccc | Criminal y Correccional |
+| CausasCSJ | causas_csj | Corte Suprema de Justicia |
+
+#### Múltiples movimientos
+
+El sistema maneja correctamente múltiples movimientos del mismo día. Si una causa tiene 3 movimientos en la fecha y está vinculada a 2 usuarios, se crean 6 documentos JudicialMovement (uno por cada combinación usuario-movimiento).
+
+### Configuración
+
+Variable de entorno para el cron:
+```env
+NOTIFICATION_JUDICIAL_MOVEMENT_CRON=*/15 * * * *  # Cada 15 minutos (default)
+```
+
+### Modelo JudicialMovement
+
+```javascript
+{
+  userId: ObjectId,           // Usuario a notificar
+  expediente: {
+    id: String,               // ID de la causa
+    number: Number,           // Número de expediente
+    year: Number,             // Año
+    fuero: String,            // Fuero (CIV, COM, etc.)
+    caratula: String,         // Carátula
+    objeto: String            // Objeto del juicio
+  },
+  movimiento: {
+    fecha: Date,              // Fecha del movimiento
+    tipo: String,             // Tipo (ESCRITO, MOVIMIENTO, etc.)
+    detalle: String,          // Descripción
+    url: String               // URL al documento (opcional)
+  },
+  notificationSettings: {
+    notifyAt: Date,           // Hora programada (19:00 Argentina)
+    channels: ['email', 'browser']
+  },
+  notificationStatus: String, // 'pending' | 'sent' | 'failed'
+  uniqueKey: String           // Hash para deduplicación
+}
+```
+
+### Scripts de utilidad
+
+#### Coordinación manual
+```bash
+# Ejecutar coordinación para hoy (solo muestra, no crea)
+node scripts/coordinateJudicialNotifications.js --dry-run
+
+# Ejecutar coordinación y crear documentos
+node scripts/coordinateJudicialNotifications.js
+
+# Coordinación para una fecha específica
+node scripts/coordinateJudicialNotifications.js --date 2026-01-20
+
+# Modo verbose
+node scripts/coordinateJudicialNotifications.js --verbose
+```
+
+#### Prueba del job completo
+```bash
+node scripts/testJudicialMovementJob.js
+```
+
+### Limitaciones conocidas
+
+| Escenario | Descripción |
+|-----------|-------------|
+| MongoDB caído | Si la BD no está disponible, coordinación y notificación fallan |
+| Causa sin Folder | Si nadie tiene la causa vinculada, no hay a quién notificar |
+| Email fallido | Errores de SES, email inválido, cuota excedida |
+| Nueva colección | Tipos de causa no listados en `CAUSA_COLLECTIONS` no se coordinan |
+| Ventana de 15 min | Movimientos que llegan entre ejecuciones se notifican en la siguiente |
 
 ## Logs
 
