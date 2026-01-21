@@ -242,10 +242,16 @@ El sistema maneja correctamente múltiples movimientos del mismo día. Si una ca
 
 ### Configuración
 
-Variable de entorno para el cron:
+Variables de entorno:
 ```env
-NOTIFICATION_JUDICIAL_MOVEMENT_CRON=*/15 * * * *  # Cada 15 minutos (default)
+# Frecuencia del job (default: cada 15 minutos)
+NOTIFICATION_JUDICIAL_MOVEMENT_CRON=*/15 * * * *
+
+# Horas para enviar reportes de monitoreo al admin (default: 15:00, 17:00, 19:30)
+JUDICIAL_MOVEMENT_REPORT_HOURS=15:00,17:00,19:30
 ```
+
+**Nota:** Los reportes de monitoreo también se envían inmediatamente si hay errores, independientemente de la hora.
 
 ### Modelo JudicialMovement
 
@@ -306,6 +312,43 @@ node scripts/testJudicialMovementJob.js
 | Email fallido | Errores de SES, email inválido, cuota excedida |
 | Nueva colección | Tipos de causa no listados en `CAUSA_COLLECTIONS` no se coordinan |
 | Ventana de 15 min | Movimientos que llegan entre ejecuciones se notifican en la siguiente |
+
+### Sistema de Alertas de Monitoreo
+
+El sistema envía reportes de monitoreo al administrador con estadísticas de cada ejecución.
+
+#### Horarios de reportes
+
+Los reportes se envían en horarios específicos para evitar saturar el email:
+
+```env
+# Default: 15:00, 17:00 y 19:30 horas Argentina
+JUDICIAL_MOVEMENT_REPORT_HOURS=15:00,17:00,19:30
+```
+
+**Excepción:** Si ocurren errores durante la ejecución, el reporte se envía inmediatamente independientemente de la hora.
+
+#### Contenido del reporte
+
+El reporte incluye:
+
+| Sección | Métricas |
+|---------|----------|
+| **Estado** | ✅ Exitoso / ⚠️ Advertencias / ❌ Errores |
+| **Coordinación** | Causas encontradas, movimientos del día, usuarios vinculados, documentos creados, existentes, errores |
+| **Notificación** | Usuarios pendientes, emails enviados, exitosos, fallidos |
+| **Resumen** | Total documentos creados, total emails enviados, total errores |
+
+#### Template de email
+
+El template se almacena en la base de datos:
+- **Categoría:** `administration`
+- **Nombre:** `judicial-movement-report`
+
+Para crear/actualizar el template:
+```bash
+node scripts/createJudicialMovementReportTemplate.js
+```
 
 ## Logs
 

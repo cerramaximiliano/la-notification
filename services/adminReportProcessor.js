@@ -67,6 +67,64 @@ function processFolderInactivityReportData(summary) {
 }
 
 /**
+ * Procesa datos para el informe de notificaciones de movimientos judiciales
+ * @param {Object} summary - Resumen de notificaciones procesadas
+ * @returns {Object} - Variables procesadas para el template
+ */
+function processJudicialMovementReportData(summary) {
+  const coordination = summary.coordination || {};
+  const notification = summary.notification || {};
+
+  // Determinar el estado general del proceso
+  const hasErrors = coordination.errores > 0 || notification.failed > 0;
+  const hasWarnings = coordination.causasEncontradas > 0 && coordination.notificacionesCreadas === 0 && coordination.notificacionesExistentes === 0;
+
+  let statusIcon = '✅';
+  let statusText = 'Completado exitosamente';
+  let statusColor = '#10b981'; // green
+
+  if (hasErrors) {
+    statusIcon = '❌';
+    statusText = 'Completado con errores';
+    statusColor = '#ef4444'; // red
+  } else if (hasWarnings) {
+    statusIcon = '⚠️';
+    statusText = 'Completado con advertencias';
+    statusColor = '#f59e0b'; // amber
+  }
+
+  return {
+    // Estado general
+    statusIcon,
+    statusText,
+    statusColor,
+
+    // Coordinación
+    causasEncontradas: coordination.causasEncontradas || 0,
+    movimientosDelDia: coordination.movimientosDelDia || 0,
+    usuariosVinculados: coordination.usuariosVinculados || 0,
+    notificacionesExistentes: coordination.notificacionesExistentes || 0,
+    notificacionesCreadas: coordination.notificacionesCreadas || 0,
+    erroresCoordinacion: coordination.errores || 0,
+
+    // Notificación
+    usuariosPendientes: notification.usuariosPendientes || 0,
+    notificacionesEnviadas: notification.enviadas || 0,
+    usuariosExitosos: notification.exitosos || 0,
+    usuariosFallidos: notification.fallidos || 0,
+
+    // Totales
+    totalDocumentosCreados: coordination.notificacionesCreadas || 0,
+    totalNotificacionesEnviadas: notification.enviadas || 0,
+    totalErrores: (coordination.errores || 0) + (notification.fallidos || 0),
+
+    // Metadata
+    timestamp: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+    fechaProcesada: summary.fechaProcesada || new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+  };
+}
+
+/**
  * Procesa datos para el informe de limpieza de logs
  * @param {Object} data - Datos de la limpieza de logs
  * @returns {Object} - Variables procesadas para el template
@@ -106,5 +164,6 @@ module.exports = {
   processTaskReportData,
   processMovementReportData,
   processFolderInactivityReportData,
+  processJudicialMovementReportData,
   processLogCleanupReportData
 };

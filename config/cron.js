@@ -124,7 +124,7 @@ function setupCronJobs() {
   // Trabajo para notificaciones de movimientos judiciales
   // Se ejecuta cada 15 minutos para procesar movimientos pendientes
   const judicialMovementCron = process.env.NOTIFICATION_JUDICIAL_MOVEMENT_CRON || '*/15 * * * *';
-  
+
   if (!cron.validate(judicialMovementCron)) {
     logger.error(`Expresión cron inválida para notificaciones de movimientos judiciales: ${judicialMovementCron}`);
   } else {

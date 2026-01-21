@@ -12,14 +12,17 @@ function processTemplate(template, data) {
 
   // Reemplazar cada variable en el template
   Object.keys(data).forEach(key => {
+    // Usar ?? en lugar de || para que 0 no sea reemplazado por string vacío
+    const value = data[key] ?? '';
+
     // Reemplazar formato {{variable}}
     const regexDoubleBraces = new RegExp(`{{${key}}}`, 'g');
-    processed = processed.replace(regexDoubleBraces, data[key] || '');
+    processed = processed.replace(regexDoubleBraces, value);
 
     // Reemplazar formato ${variable}
     // Escapamos el $ para la expresión regular
     const regexDollarBraces = new RegExp(`\\$\\{${key}\\}`, 'g');
-    processed = processed.replace(regexDollarBraces, data[key] || '');
+    processed = processed.replace(regexDollarBraces, value);
   });
 
   return processed;
