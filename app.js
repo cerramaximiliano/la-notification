@@ -56,8 +56,13 @@ app.get("/", (req, res) => {
 
 const initializeApp = async () => {
     try {
-        const secretsString = await retrieveSecrets();
-        await fs.writeFile(".env", secretsString);
+        let secretsString;
+        try {
+            secretsString = await retrieveSecrets();
+            await fs.writeFile(".env", secretsString);
+        } catch (secretsError) {
+            logger.warn(`No se pudieron cargar secrets de AWS: ${secretsError.message}. Usando .env local.`);
+        }
         dotenv.config();
 
         const connectDB = require("./config/db");
@@ -77,6 +82,10 @@ const initializeApp = async () => {
         // Configurar rutas de movimientos judiciales
         const judicialMovementRoutes = require('./routes/judicialMovements');
         app.use('/api/judicial-movements', judicialMovementRoutes);
+
+        // Configurar rutas de eventos de carpetas (WebSocket relay)
+        const folderEventRoutes = require('./routes/folderEvents');
+        app.use('/api/folder-events', folderEventRoutes);
 
         // Exportar io globalmente antes de configurar WebSocket
         global.io = io;

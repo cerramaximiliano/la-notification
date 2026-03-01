@@ -46,10 +46,10 @@ const judicialMovementSchema = new mongoose.Schema({
   
   // Historial de intentos de notificación
   notifications: [{
-    date: Date,
-    type: String, // email, browser
-    success: Boolean,
-    details: String
+    date: { type: Date, required: true },
+    type: { type: String, required: true }, // email, browser
+    success: { type: Boolean, required: true },
+    details: { type: String, required: true }
   }],
   
   // Para evitar duplicados
@@ -67,10 +67,29 @@ judicialMovementSchema.index({ userId: 1, 'movimiento.fecha': 1, notificationSta
 judicialMovementSchema.index({ 'notificationSettings.notifyAt': 1, notificationStatus: 1 });
 
 // Método para generar clave única
+// Nota: movimientoFecha debe estar en formato YYYY-MM-DD para consistencia
+// Incluye hash del detalle para soportar múltiples movimientos del mismo tipo en el mismo día
 judicialMovementSchema.statics.generateUniqueKey = function(userId, expedienteId, movimientoFecha, movimientoTipo, movimientoDetalle) {
-  // Incluir el detalle para diferenciar movimientos del mismo tipo en la misma fecha
-  const detalle = movimientoDetalle ? `_${movimientoDetalle.substring(0, 20).replace(/[^a-zA-Z0-9]/g, '')}` : '';
-  return `${userId}_${expedienteId}_${movimientoFecha}_${movimientoTipo}${detalle}`;
+  const crypto = require('crypto');
+
+  // Normalizar fecha si viene como Date object o string ISO
+  let fechaNormalizada = movimientoFecha;
+  if (movimientoFecha instanceof Date) {
+    fechaNormalizada = movimientoFecha.toISOString().split('T')[0];
+  } else if (typeof movimientoFecha === 'string' && movimientoFecha.includes('T')) {
+    // Si es ISO string con hora, extraer solo la fecha
+    fechaNormalizada = movimientoFecha.split('T')[0];
+  }
+
+  // Generar hash corto del detalle para diferenciarlo de otros movimientos del mismo día/tipo
+  // Usamos los primeros 8 caracteres del hash MD5 para mantener el uniqueKey relativamente corto
+  const detalleHash = crypto
+    .createHash('md5')
+    .update(movimientoDetalle || '')
+    .digest('hex')
+    .substring(0, 8);
+
+  return `${userId}_${expedienteId}_${fechaNormalizada}_${movimientoTipo}_${detalleHash}`;
 };
 
 module.exports = mongoose.model("JudicialMovement", judicialMovementSchema);

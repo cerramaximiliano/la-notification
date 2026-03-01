@@ -12,6 +12,7 @@ const Alert = require('./Alert');
 const NotificationLog = require('./NotificationLog');
 const JudicialMovement = require('./JudicialMovement');
 const EmailTemplate = require('./EmailTemplate');
+const Folder = require('./Folder');
 
 // Exportar todos los modelos
 module.exports = {
@@ -22,5 +23,6 @@ module.exports = {
   Alert,
   NotificationLog,
   JudicialMovement,
-  EmailTemplate
+  EmailTemplate,
+  Folder
 };

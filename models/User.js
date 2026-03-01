@@ -15,6 +15,30 @@ const NotificationSettingsSchema = new Schema({
   }
 }, { _id: false });
 
+// Esquema específico para configuración de inactividad de causas
+const InactivitySettingsSchema = new Schema({
+  // Días de anticipación para la notificación (default 5 días)
+  daysInAdvance: {
+    type: Number,
+    default: 5
+  },
+  // Días de inactividad para alerta de caducidad (default 180 días = 6 meses)
+  caducityDays: {
+    type: Number,
+    default: 180
+  },
+  // Días para alerta de prescripción (default 730 días = 2 años)
+  prescriptionDays: {
+    type: Number,
+    default: 730
+  },
+  // Por defecto, notificar solo una vez
+  notifyOnceOnly: {
+    type: Boolean,
+    default: true
+  }
+}, { _id: false });
+
 // Definimos un subschema para las preferencias del usuario
 const UserPreferencesSchema = new Schema({
   // Zona horaria del usuario
@@ -59,7 +83,8 @@ const UserPreferencesSchema = new Schema({
 
       // Estado simple (para mantener compatibilidad con controladores existentes)
       calendar: { type: Boolean, default: true },
-      expiration: { type: Boolean, default: true },
+      expiration: { type: Boolean, default: true }, // Vencimientos de movimientos
+      taskExpiration: { type: Boolean, default: true }, // Vencimientos de tareas
       inactivity: { type: Boolean, default: true },
 
       // Configuración detallada para cada tipo de notificación
@@ -71,8 +96,12 @@ const UserPreferencesSchema = new Schema({
         type: NotificationSettingsSchema,
         default: () => ({})
       },
-      inactivitySettings: {
+      taskExpirationSettings: {
         type: NotificationSettingsSchema,
+        default: () => ({})
+      },
+      inactivitySettings: {
+        type: InactivitySettingsSchema,
         default: () => ({})
       }
     },

@@ -10,9 +10,11 @@ module.exports = {
             max_memory_restart: '1G',
             env: {
                 NODE_ENV: 'development',
+                FORCE_COLOR: '1', // Habilitar colores en los logs
             },
             env_production: {
                 NODE_ENV: 'production',
+                FORCE_COLOR: '1', // Habilitar colores en los logs
             },
             error_file: 'logs/pm2-error.log',
             out_file: 'logs/pm2-out.log',

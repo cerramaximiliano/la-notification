@@ -15,8 +15,11 @@ const helpers = {
 
         switch (notificationType) {
             case 'movement':
-            case 'task':
                 userNotificationsEnabled = notifications.user && notifications.user.expiration !== false;
+                break;
+            case 'task':
+                // Para tareas, se notifica cuando taskExpiration no sea explícitamente false
+                userNotificationsEnabled = notifications.user && notifications.user.taskExpiration !== false;
                 break;
             case 'calendar':
                 userNotificationsEnabled = notifications.user && notifications.user.calendar !== false;
@@ -36,8 +39,10 @@ const helpers = {
 
         switch (notificationType) {
             case 'movement':
-            case 'task':
                 return notifications.expirationSettings || { notifyOnceOnly: true, daysInAdvance: 5 };
+            case 'task':
+                // Para tareas, usa taskExpirationSettings
+                return notifications.taskExpirationSettings || { notifyOnceOnly: true, daysInAdvance: 5 };
             case 'calendar':
                 return notifications.calendarSettings || { notifyOnceOnly: true, daysInAdvance: 5 };
             default:

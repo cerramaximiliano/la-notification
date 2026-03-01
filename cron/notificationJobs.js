@@ -8,7 +8,9 @@ const {
   sendTaskNotifications,
   sendMovementNotifications,
   sendJudicialMovementNotifications,
+  sendFolderInactivityNotifications,
 } = require('../services/notifications');
+const { coordinateJudicialMovements } = require('../services/judicialMovementCoordinator');
 
 
 
@@ -20,6 +22,7 @@ const Movement = require('../models/Movement');
 const Alert = require("../models/Alert");
 const JudicialMovement = require('../models/JudicialMovement');
 const NotificationLog = require('../models/NotificationLog');
+const Folder = require('../models/Folder');
 const logger = require('../config/logger');
 const { sendTaskBrowserAlerts, sendMovementBrowserAlerts, sendCalendarBrowserAlerts } = require('../services/browser');
 
@@ -200,11 +203,11 @@ async function taskNotificationJob() {
     const defaultDaysInAdvance = parseInt(process.env.DEFAULT_DAYS_IN_ADVANCE) || 5;
     logger.info(`Valor por defecto para notificar tareas: ${defaultDaysInAdvance} días de anticipación`);
 
-    // Obtener todos los usuarios que tienen habilitadas las notificaciones
-    // de cualquier tipo (email, navegador o ambas)
+    // Obtener todos los usuarios que tienen habilitadas las notificaciones de tareas
+    // Se notifica cuando taskExpiration no sea explícitamente false
     const users = await User.find({
       $and: [
-        { 'preferences.notifications.user.expiration': { $ne: false } },
+        { 'preferences.notifications.user.taskExpiration': { $ne: false } },
         {
           $or: [
             { 'preferences.notifications.channels.email': { $ne: false } },
@@ -231,11 +234,11 @@ async function taskNotificationJob() {
         const preferences = user.preferences?.notifications || {};
         const channels = preferences.channels || {};
 
-        // Obtenemos la configuración específica de este usuario
-        const userExpirationSettings = preferences.user?.expirationSettings || {};
-        const userDaysInAdvance = userExpirationSettings.daysInAdvance || defaultDaysInAdvance;
+        // Obtenemos la configuración específica de tareas de este usuario
+        const userTaskExpirationSettings = preferences.user?.taskExpirationSettings || {};
+        const userDaysInAdvance = userTaskExpirationSettings.daysInAdvance || defaultDaysInAdvance;
 
-        logger.debug(`Usuario ${user.email} tiene configuración de días: ${userDaysInAdvance}`);
+        logger.debug(`Usuario ${user.email} tiene configuración de días para tareas: ${userDaysInAdvance}`);
 
         let userReceivedNotification = false;
 
@@ -701,12 +704,58 @@ function formatUptime(uptime) {
 /**
  * Procesa y envía notificaciones de movimientos judiciales
  * Este job busca movimientos pendientes que deben notificarse según su hora programada
+ *
+ * PASO 1: Coordinación - Crea documentos JudicialMovement faltantes para movimientos del día
+ * PASO 2: Notificación - Envía notificaciones para documentos con notifyAt <= ahora
+ * PASO 3: Reporte - Envía informe de monitoreo al administrador
  */
 async function judicialMovementNotificationJob() {
+  // Estadísticas para el reporte de monitoreo
+  let coordinationStats = {
+    causasEncontradas: 0,
+    movimientosDelDia: 0,
+    usuariosVinculados: 0,
+    notificacionesExistentes: 0,
+    notificacionesCreadas: 0,
+    errores: 0
+  };
+
+  let notificationStats = {
+    usuariosPendientes: 0,
+    enviadas: 0,
+    exitosos: 0,
+    fallidos: 0
+  };
+
   try {
     logger.info('Iniciando trabajo de notificaciones de movimientos judiciales');
 
+    // PASO 1: COORDINACIÓN
+    // Crear documentos JudicialMovement faltantes para causas con movimientos del día
+    logger.info('[COORDINACIÓN] Buscando movimientos del día sin documentos de notificación...');
+    try {
+      coordinationStats = await coordinateJudicialMovements({
+        models: { Folder, JudicialMovement }
+      });
+
+      if (coordinationStats.notificacionesCreadas > 0) {
+        logger.info(`[COORDINACIÓN] Se crearon ${coordinationStats.notificacionesCreadas} documentos de notificación faltantes`);
+      }
+      if (coordinationStats.notificacionesExistentes > 0) {
+        logger.debug(`[COORDINACIÓN] ${coordinationStats.notificacionesExistentes} documentos ya existían`);
+      }
+      if (coordinationStats.errores > 0) {
+        logger.warn(`[COORDINACIÓN] Se produjeron ${coordinationStats.errores} errores durante la coordinación`);
+      }
+    } catch (coordError) {
+      logger.error(`[COORDINACIÓN] Error en coordinación: ${coordError.message}`);
+      coordinationStats.errores++;
+      // Continuamos con las notificaciones aunque falle la coordinación
+    }
+
+    // PASO 2: NOTIFICACIÓN
     // Buscar todos los usuarios que tienen movimientos pendientes de notificar
+    logger.info('[NOTIFICACIÓN] Buscando movimientos pendientes de notificar...');
     const now = new Date();
     const pendingMovements = await JudicialMovement.aggregate([
       {
@@ -724,11 +773,8 @@ async function judicialMovementNotificationJob() {
       }
     ]);
 
-    logger.info(`Se encontraron ${pendingMovements.length} usuarios con movimientos judiciales pendientes`);
-
-    let totalNotifications = 0;
-    let totalSuccessful = 0;
-    let totalFailed = 0;
+    notificationStats.usuariosPendientes = pendingMovements.length;
+    logger.info(`[NOTIFICACIÓN] Se encontraron ${pendingMovements.length} usuarios con movimientos judiciales pendientes`);
 
     // Procesar cada usuario
     for (const group of pendingMovements) {
@@ -740,7 +786,7 @@ async function judicialMovementNotificationJob() {
           logger.warn(`Usuario ${userId} no encontrado, marcando movimientos como fallidos`);
           await JudicialMovement.updateMany(
             { userId, notificationStatus: 'pending' },
-            { 
+            {
               $set: { notificationStatus: 'failed' },
               $push: {
                 notifications: {
@@ -752,7 +798,7 @@ async function judicialMovementNotificationJob() {
               }
             }
           );
-          totalFailed += group.count;
+          notificationStats.fallidos++;
           continue;
         }
 
@@ -764,35 +810,180 @@ async function judicialMovementNotificationJob() {
         });
 
         if (result.success && result.notified) {
-          totalNotifications += result.count || 0;
-          totalSuccessful++;
+          notificationStats.enviadas += result.count || 0;
+          notificationStats.exitosos++;
           logger.info(`Notificación de movimientos judiciales enviada a ${user.email} con ${result.count} movimientos`);
         } else if (!result.success) {
-          totalFailed++;
+          notificationStats.fallidos++;
           logger.error(`Error al enviar notificaciones judiciales a ${user.email}: ${result.message}`);
         }
 
       } catch (userError) {
-        totalFailed++;
+        notificationStats.fallidos++;
         logger.error(`Error procesando movimientos judiciales para usuario ${group._id}: ${userError.message}`);
       }
     }
 
-    // Limpiar movimientos antiguos (opcional: mantener historial de 30 días)
-    const thirtyDaysAgo = moment().subtract(30, 'days').toDate();
-    const cleanupResult = await JudicialMovement.deleteMany({
-      notificationStatus: 'sent',
-      updatedAt: { $lt: thirtyDaysAgo }  // Usar fecha de actualización, no fecha del movimiento
-    });
-
-    logger.info(`Trabajo de notificaciones de movimientos judiciales completado:`);
-    logger.info(`- Total de notificaciones enviadas: ${totalNotifications}`);
-    logger.info(`- Usuarios procesados exitosamente: ${totalSuccessful}`);
-    logger.info(`- Usuarios con errores: ${totalFailed}`);
-    logger.info(`- Movimientos antiguos eliminados: ${cleanupResult.deletedCount}`);
+    logger.info(`[NOTIFICACIÓN] Trabajo de notificaciones de movimientos judiciales completado:`);
+    logger.info(`[NOTIFICACIÓN] - Total de notificaciones enviadas: ${notificationStats.enviadas}`);
+    logger.info(`[NOTIFICACIÓN] - Usuarios procesados exitosamente: ${notificationStats.exitosos}`);
+    logger.info(`[NOTIFICACIÓN] - Usuarios con errores: ${notificationStats.fallidos}`);
 
   } catch (error) {
     logger.error(`Error crítico en trabajo de notificaciones judiciales: ${error.message}`, error);
+    coordinationStats.errores++;
+  }
+
+  // PASO 3: REPORTE DE MONITOREO
+  // Enviar informe al administrador solo a las 15:00, 17:00 y 19:30 (Argentina)
+  // o cuando hay errores (para alertar inmediatamente)
+  const reportHours = (process.env.JUDICIAL_MOVEMENT_REPORT_HOURS || '15:00,17:00,19:30').split(',').map(h => h.trim());
+  const nowArg = moment().tz('America/Argentina/Buenos_Aires');
+  const currentTime = nowArg.format('H:mm'); // Formato "15:00", "17:00", "19:30"
+  const currentHourMinute = `${nowArg.hour()}:${String(nowArg.minute()).padStart(2, '0')}`;
+
+  const hasErrors = coordinationStats.errores > 0 || notificationStats.fallidos > 0;
+  const isReportTime = reportHours.some(h => {
+    const [hour, minute] = h.split(':');
+    return parseInt(hour) === nowArg.hour() && parseInt(minute) === nowArg.minute();
+  });
+
+  // También enviar si hay actividad significativa (notificaciones creadas o enviadas)
+  const hasActivity = coordinationStats.notificacionesCreadas > 0 || notificationStats.enviadas > 0;
+
+  if (process.env.ADMIN_EMAIL && (isReportTime || hasErrors)) {
+    try {
+      const adminEmail = process.env.ADMIN_EMAIL;
+
+      // Usar template de base de datos
+      const { processJudicialMovementReportData } = require('../services/adminReportProcessor');
+      const { getProcessedTemplate } = require('../services/templateProcessor');
+
+      const summary = {
+        coordination: coordinationStats,
+        notification: notificationStats,
+        fechaProcesada: new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+      };
+
+      const templateVariables = processJudicialMovementReportData(summary);
+      const processedTemplate = await getProcessedTemplate('administration', 'judicial-movement-report', templateVariables);
+
+      await sendEmail(
+        adminEmail,
+        processedTemplate.subject,
+        processedTemplate.html,
+        processedTemplate.text
+      );
+
+      const reason = hasErrors ? '(errores detectados)' : `(hora programada: ${currentHourMinute})`;
+      logger.info(`[REPORTE] Informe de movimientos judiciales enviado al administrador: ${adminEmail} ${reason}`);
+    } catch (reportError) {
+      logger.error(`[REPORTE] Error al enviar informe al administrador: ${reportError.message}`);
+    }
+  } else if (process.env.ADMIN_EMAIL) {
+    logger.debug(`[REPORTE] Reporte omitido - Hora actual: ${currentHourMinute}, Horas programadas: ${reportHours.join(', ')}`);
+  }
+}
+
+/**
+ * Notifica a todos los usuarios de sus carpetas próximas a caducidad o prescripción por inactividad
+ */
+async function folderInactivityNotificationJob() {
+  try {
+    logger.info('Iniciando trabajo de notificaciones de inactividad de carpetas');
+
+    // Obtener todos los usuarios que tienen habilitadas las notificaciones de inactividad
+    // Se notifica cuando inactivity no sea explícitamente false
+    const users = await User.find({
+      $and: [
+        { 'preferences.notifications.user.inactivity': { $ne: false } },
+        { 'preferences.notifications.channels.email': { $ne: false } }
+      ]
+    });
+
+    logger.info(`Se encontraron ${users.length} usuarios con notificaciones de inactividad habilitadas`);
+
+    // Contadores para el informe final
+    let totalCaducityNotifications = 0;
+    let totalPrescriptionNotifications = 0;
+    let totalSuccessful = 0;
+    let totalFailed = 0;
+    let totalUsersWithNotifications = 0;
+
+    // Procesar cada usuario
+    for (const user of users) {
+      try {
+        logger.debug(`Procesando notificaciones de inactividad para el usuario ${user._id} (${user.email})`);
+
+        const result = await sendFolderInactivityNotifications({
+          userId: user._id,
+          models: { User, Folder },
+          utilities: { sendEmail, logger, moment }
+        });
+
+        if (result.notified) {
+          totalCaducityNotifications += result.caducity?.count || 0;
+          totalPrescriptionNotifications += result.prescription?.count || 0;
+          totalSuccessful++;
+          totalUsersWithNotifications++;
+          logger.info(`Notificaciones de inactividad enviadas a ${user.email}: ${result.caducity?.count || 0} caducidad, ${result.prescription?.count || 0} prescripción`);
+        } else {
+          logger.debug(`No se enviaron notificaciones de inactividad a ${user.email}: ${result.message}`);
+        }
+
+      } catch (userError) {
+        totalFailed++;
+        logger.error(`Error al procesar notificaciones de inactividad para usuario ${user._id}: ${userError.message}`);
+      }
+    }
+
+    // Resumen final
+    const summary = {
+      success: true,
+      usersProcessed: users.length,
+      usersNotified: totalUsersWithNotifications,
+      caducityNotificationsSent: totalCaducityNotifications,
+      prescriptionNotificationsSent: totalPrescriptionNotifications,
+      totalNotifications: totalCaducityNotifications + totalPrescriptionNotifications,
+      totalSuccessfulProcesses: totalSuccessful,
+      totalFailedProcesses: totalFailed
+    };
+
+    logger.info(`Trabajo de notificaciones de inactividad completado: ${JSON.stringify(summary)}`);
+
+    // Si está configurado, enviar email al administrador con el resumen
+    // Esta funcionalidad es opcional y se puede integrar con el sistema centralizado
+    if (process.env.ADMIN_EMAIL) {
+      try {
+        const adminEmail = process.env.ADMIN_EMAIL;
+
+        // Usar template de base de datos
+        const { processFolderInactivityReportData } = require('../services/adminReportProcessor');
+        const { getProcessedTemplate } = require('../services/templateProcessor');
+
+        const templateVariables = processFolderInactivityReportData(summary);
+        const processedTemplate = await getProcessedTemplate('administration', 'folder-inactivity-report', templateVariables);
+
+        await sendEmail(
+          adminEmail,
+          processedTemplate.subject,
+          processedTemplate.html,
+          processedTemplate.text
+        );
+        logger.info(`Informe de notificaciones de inactividad enviado al administrador: ${adminEmail}`);
+      } catch (emailError) {
+        logger.error(`Error al enviar informe de inactividad al administrador: ${emailError.message}`);
+      }
+    }
+
+    return summary;
+
+  } catch (error) {
+    logger.error(`Error general en el trabajo de notificaciones de inactividad: ${error.message}`);
+    return {
+      success: false,
+      error: error.message
+    };
   }
 }
 
@@ -801,5 +992,6 @@ module.exports = {
   taskNotificationJob,
   movementNotificationJob,
   clearLogsJob,
-  judicialMovementNotificationJob
+  judicialMovementNotificationJob,
+  folderInactivityNotificationJob
 };
