@@ -87,6 +87,10 @@ const initializeApp = async () => {
         const folderEventRoutes = require('./routes/folderEvents');
         app.use('/api/folder-events', folderEventRoutes);
 
+        // Configurar rutas de progreso de sincronización PJN (WebSocket relay)
+        const syncProgressRoutes = require('./routes/syncProgress');
+        app.use('/api/sync-progress', syncProgressRoutes);
+
         // Exportar io globalmente antes de configurar WebSocket
         global.io = io;
         
