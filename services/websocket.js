@@ -29,12 +29,37 @@ function extractTokenFromCookies(socket) {
 }
 
 /**
+ * Inicia o reinicia la verificación periódica del token para un socket.
+ * Si el token vence, notifica al cliente y le da 30s para renovarlo antes de desconectar.
+ */
+function setupTokenVerification(socket, token, userId) {
+    if (socket.tokenCheckInterval) {
+        clearInterval(socket.tokenCheckInterval);
+    }
+
+    socket.tokenCheckInterval = setInterval(() => {
+        try {
+            jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            logger.warn(`Token vencido para usuario ${userId}, solicitando renovación`);
+            socket.emit('token_refresh_needed');
+
+            if (socket.tokenRefreshTimeout) clearTimeout(socket.tokenRefreshTimeout);
+            socket.tokenRefreshTimeout = setTimeout(() => {
+                logger.warn(`Usuario ${userId}: sin respuesta a token_refresh_needed, desconectando`);
+                socket.disconnect(true);
+            }, 30 * 1000);
+        }
+    }, 5 * 60 * 1000);
+}
+
+/**
  * Configura el servidor WebSocket
  * @param {Object} io - Instancia de socket.io
  */
 function setupWebSocket(io) {
     // La instancia de io ya está guardada globalmente en app.js
-    
+
     io.on('connection', (socket) => {
         logger.info(`Nueva conexión WebSocket: ${socket.id}`);
 
@@ -42,68 +67,86 @@ function setupWebSocket(io) {
         socket.on('authenticate', (userId) => {
             try {
                 const token = socket.handshake.auth?.token || extractTokenFromCookies(socket);
-                console.log(token)
-
 
                 if (!token) {
                     socket.emit('authentication_error', 'Token requerido');
                     return;
                 }
 
+                if (!userId) {
+                    socket.emit('authentication_error', 'Se requiere ID de usuario para autenticar');
+                    return;
+                }
 
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-                // Verificar que userId coincida (el token usa 'id' no 'userId')
                 if (decoded.id !== userId) {
                     socket.emit('authentication_error', 'Usuario no autorizado');
                     return;
                 }
 
-                // Configurar re-verificación periódica
-                socket.tokenCheckInterval = setInterval(async () => {
-                    try {
-                        jwt.verify(token, process.env.JWT_SECRET);
-                    } catch (error) {
-                        socket.emit('auth_expired', 'Token expirado');
-                        socket.disconnect(true);
-                    }
-                }, 5 * 60 * 1000); // Cada 5 minutos
-
-
-
-                if (!userId) {
-                    logger.warn(`Intento de autenticación sin userId: ${socket.id}`);
-                    socket.emit('authentication_error', 'Se requiere ID de usuario para autenticar');
-                    return;
-                }
+                setupTokenVerification(socket, token, userId);
 
                 // Guardar la asociación usuarioId -> socket
                 if (connectedUsers.has(userId)) {
-                    // Si el usuario ya tiene una conexión, añadir este socket a su lista
                     connectedUsers.get(userId).add(socket.id);
                 } else {
-                    // Si es la primera conexión del usuario, crear un nuevo conjunto
                     connectedUsers.set(userId, new Set([socket.id]));
                 }
 
                 logger.info(`Usuario ${userId} autenticado en conexión ${socket.id}`);
-                socket.userId = userId; // Guardar el userId en el objeto del socket
-                socket.join(`user-${userId}`); // Unir al socket a una sala específica para el usuario
+                socket.userId = userId;
+                socket.join(`user-${userId}`);
                 socket.emit('authenticated', { success: true });
 
-                // Enviar todas las alertas pendientes al usuario
                 sendPendingAlerts(userId);
             } catch (error) {
                 logger.error(`authenticate error [socket=${socket.id}, userId=${userId}]: ${error.name} - ${error.message}`);
                 socket.emit('authentication_error', 'Token inválido');
             }
+        });
 
+        // Renovar token sin cerrar la conexión
+        socket.on('re_authenticate', ({ token: newToken } = {}) => {
+            const userId = socket.userId;
+            try {
+                if (!newToken) {
+                    socket.emit('authentication_error', 'Token requerido');
+                    return;
+                }
+
+                const decoded = jwt.verify(newToken, process.env.JWT_SECRET);
+
+                if (decoded.id !== userId) {
+                    socket.emit('authentication_error', 'Usuario no autorizado');
+                    socket.disconnect(true);
+                    return;
+                }
+
+                // Cancelar el timeout de desconexión pendiente
+                if (socket.tokenRefreshTimeout) {
+                    clearTimeout(socket.tokenRefreshTimeout);
+                    socket.tokenRefreshTimeout = null;
+                }
+
+                setupTokenVerification(socket, newToken, userId);
+
+                logger.info(`Usuario ${userId}: token renovado correctamente`);
+                socket.emit('authenticated', { success: true });
+            } catch (error) {
+                logger.error(`re_authenticate error [socket=${socket.id}, userId=${userId}]: ${error.name} - ${error.message}`);
+                socket.emit('authentication_error', 'Token inválido');
+                socket.disconnect(true);
+            }
         });
 
         // Manejar desconexión
         socket.on('disconnect', () => {
             if (socket.tokenCheckInterval) {
                 clearInterval(socket.tokenCheckInterval);
+            }
+            if (socket.tokenRefreshTimeout) {
+                clearTimeout(socket.tokenRefreshTimeout);
             }
 
             const userId = socket.userId;
