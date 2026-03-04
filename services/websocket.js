@@ -94,8 +94,8 @@ function setupWebSocket(io) {
                 // Enviar todas las alertas pendientes al usuario
                 sendPendingAlerts(userId);
             } catch (error) {
+                logger.error(`authenticate error [socket=${socket.id}, userId=${userId}]: ${error.name} - ${error.message}`);
                 socket.emit('authentication_error', 'Token inválido');
-
             }
 
         });
