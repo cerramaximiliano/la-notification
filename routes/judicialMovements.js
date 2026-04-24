@@ -26,6 +26,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       received: movements.length,
       created: 0,
       updated: 0,
+      skipped: 0,
       duplicates: 0,
       errors: []
     };
@@ -105,7 +106,12 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         const existingMovement = await JudicialMovement.findOne({ uniqueKey });
 
         if (existingMovement) {
-          // El movimiento ya existe - actualizarlo y resetearlo a pending
+          // El movimiento ya existe — dos caminos según su estado:
+          //   - sent: NO re-notificar (evita emails duplicados cuando un worker
+          //     re-detecta el mismo movimiento por cambio de key, backfill o
+          //     limpieza administrativa). Sólo refrescamos metadata por si
+          //     detalle/url/caratula cambió.
+          //   - pending / failed: resetear para que el procesador lo reintente.
           logger.info(`Movimiento existente encontrado - _id: ${existingMovement._id}, estado anterior: ${existingMovement.notificationStatus}`);
 
           existingMovement.expediente = {
@@ -122,19 +128,23 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             detalle: movimiento.detalle,
             url: movimiento.url
           };
-          existingMovement.notificationSettings = {
-            notifyAt,
-            channels: ['email', 'browser']
-          };
-          // IMPORTANTE: Resetear a pending para que se notifique nuevamente
-          existingMovement.notificationStatus = 'pending';
-          // Limpiar notificaciones anteriores
-          existingMovement.notifications = [];
 
-          await existingMovement.save();
-
-          logger.info(`Movimiento actualizado y reseteado a pending - uniqueKey: ${uniqueKey}, _id: ${existingMovement._id}`);
-          results.updated++;
+          if (existingMovement.notificationStatus === 'sent') {
+            // Ya notificado con éxito — mantener estado, solo persistir metadata.
+            await existingMovement.save();
+            logger.info(`Movimiento ya notificado — skip re-envío - uniqueKey: ${uniqueKey}`);
+            results.skipped++;
+          } else {
+            existingMovement.notificationSettings = {
+              notifyAt,
+              channels: ['email', 'browser']
+            };
+            existingMovement.notificationStatus = 'pending';
+            existingMovement.notifications = [];
+            await existingMovement.save();
+            logger.info(`Movimiento reseteado a pending para reintento - uniqueKey: ${uniqueKey}, _id: ${existingMovement._id}`);
+            results.updated++;
+          }
         } else {
           // Movimiento nuevo - crearlo
           const newMovement = await JudicialMovement.create({
