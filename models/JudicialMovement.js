@@ -9,11 +9,15 @@ const judicialMovementSchema = new mongoose.Schema({
     index: true
   },
   
-  // Datos del expediente
+  // Datos del expediente.
+  // `number` y `year` son metadata display (no entran en uniqueKey). Los
+  // hacemos opcionales porque algunas fuentes (causas SCBA de formato viejo,
+  // sin year embebido en el número) no los tienen disponibles y la
+  // validación estricta rechazaba el doc completo impidiendo notificar.
   expediente: {
     id: { type: String, required: true }, // ID del expediente en el sistema principal
-    number: { type: Number, required: true },
-    year: { type: Number, required: true },
+    number: { type: Number },
+    year: { type: Number },
     fuero: { type: String, required: true },
     caratula: { type: String, required: true },
     objeto: String
