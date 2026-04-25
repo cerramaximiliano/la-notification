@@ -1125,10 +1125,12 @@ async function sendJudicialMovementNotifications({
             };
         }
 
-        // Agrupar movimientos por expediente
+        // Agrupar movimientos por expediente.
+        // Usamos expediente.id (siempre presente) como key principal de agrupación
+        // para no depender de number/year (que pueden no estar para causas SCBA viejas).
         const movementsByExpediente = {};
         pendingMovements.forEach(movement => {
-            const key = `${movement.expediente.number}/${movement.expediente.year}`;
+            const key = movement.expediente.id || `${movement.expediente.number}/${movement.expediente.year ?? ''}`;
             if (!movementsByExpediente[key]) {
                 movementsByExpediente[key] = {
                     expediente: movement.expediente,
@@ -1265,7 +1267,9 @@ async function sendJudicialMovementNotifications({
                     },
                     metadata: {
                         source: 'cron',
-                        expediente: `${movement.expediente.number}/${movement.expediente.year}`
+                        expediente: movement.expediente.year != null && movement.expediente.year !== ''
+                            ? `${movement.expediente.number}/${movement.expediente.year}`
+                            : `${movement.expediente.number ?? ''}`.trim() || '(sin nº)'
                     },
                     sentAt: new Date()
                 }, user._id);

@@ -82,7 +82,7 @@ function processJudicialMovementsData(movementsByExpediente, user) {
   const expedienteTemplate = `
 <div style="margin-bottom: 30px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
   <h3 style="color: #1f2937; margin-bottom: 15px; font-size: 18px;">
-    Expediente {{number}}/{{year}} - {{fuero}}
+    Expediente {{numberYear}} - {{fuero}}
   </h3>
   <p style="font-size: 14px; color: #6b7280; margin-bottom: 15px;">
     <strong>Carátula:</strong> {{caratula}}
@@ -141,17 +141,24 @@ function processJudicialMovementsData(movementsByExpediente, user) {
       }
     });
     
+    // Formato "number/year" cuando hay year, sólo "number" cuando no.
+    // Algunas fuentes (causas SCBA con numeración vieja) no tienen year.
+    const numberYear = expediente.year != null && expediente.year !== ''
+      ? `${expediente.number}/${expediente.year}`
+      : `${expediente.number ?? ''}`.trim() || '(sin nº)';
+
     // Procesar template del expediente
     expedientesHtml += processTemplate(expedienteTemplate, {
       number: expediente.number,
       year: expediente.year,
+      numberYear,
       fuero: expediente.fuero,
       caratula: expediente.caratula,
       movimientosRows
     });
-    
+
     // Versión texto
-    expedientesText += `\nExpediente ${expediente.number}/${expediente.year} - ${expediente.fuero}\n`;
+    expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}\n`;
     expedientesText += `Carátula: ${expediente.caratula}\n\n`;
     expedientesText += movimientosText;
   }
