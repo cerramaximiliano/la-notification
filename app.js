@@ -91,6 +91,10 @@ const initializeApp = async () => {
         const syncProgressRoutes = require('./routes/syncProgress');
         app.use('/api/sync-progress', syncProgressRoutes);
 
+        // Eventos del módulo SECLO (credenciales + solicitudes en tiempo real)
+        const secloEventRoutes = require('./routes/secloEvents');
+        app.use('/api/seclo-events', secloEventRoutes);
+
         // Exportar io globalmente antes de configurar WebSocket
         global.io = io;
         
