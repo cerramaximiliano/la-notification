@@ -102,7 +102,13 @@ function setupWebSocket(io) {
                 sendPendingAlerts(userId);
             } catch (error) {
                 logger.error(`authenticate error [socket=${socket.id}, userId=${userId}]: ${error.name} - ${error.message}`);
-                socket.emit('authentication_error', 'Token inválido');
+                // Detallar el motivo para que el cliente sepa si tiene que refrescar
+                // el access token o si fue un problema distinto de credenciales.
+                let reason = 'Token inválido';
+                if (error.name === 'TokenExpiredError') reason = 'Token expirado';
+                else if (error.name === 'JsonWebTokenError') reason = `Token mal firmado: ${error.message}`;
+                else if (error.name === 'NotBeforeError') reason = 'Token aún no válido';
+                socket.emit('authentication_error', reason);
             }
         });
 
