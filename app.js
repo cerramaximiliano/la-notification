@@ -95,6 +95,10 @@ const initializeApp = async () => {
         const secloEventRoutes = require('./routes/secloEvents');
         app.use('/api/seclo-events', secloEventRoutes);
 
+        // Broadcast de estado del sistema (mantenimiento PJN, etc.)
+        const systemStatusRoutes = require('./routes/systemStatus');
+        app.use('/api/system-status', systemStatusRoutes);
+
         // Exportar io globalmente antes de configurar WebSocket
         global.io = io;
         
