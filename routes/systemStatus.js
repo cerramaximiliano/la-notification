@@ -17,7 +17,7 @@ const router = express.Router();
 const logger = require('../config/logger');
 const { verifyServiceToken } = require('../middleware/auth');
 
-const VALID_TYPES = ['PJN_SITE_STATUS'];
+const VALID_TYPES = ['PJN_SITE_STATUS', 'SCBA_SITE_STATUS'];
 
 /**
  * POST /api/system-status/broadcast
