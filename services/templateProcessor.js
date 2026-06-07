@@ -78,38 +78,35 @@ function processJudicialMovementsData(movementsByExpediente, user) {
   let expedientesHtml = '';
   let expedientesText = '';
   
-  // Template base (se puede mejorar cargándolo desde el template)
+  // Card por expediente (diseño onboarding: card redondeada con header tintado
+  // + tabla de movimientos). Se inyecta como filas <tr> dentro de la card blanca
+  // del template DB notification/judicial-movements (slot {{expedientesHtml}}).
   const expedienteTemplate = `
-<div style="margin-bottom: 30px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-  <h3 style="color: #1f2937; margin-bottom: 15px; font-size: 18px;">
-    Expediente {{numberYear}} - {{fuero}}
-  </h3>
-  <p style="font-size: 14px; color: #6b7280; margin-bottom: 15px;">
-    <strong>Carátula:</strong> {{caratula}}
-  </p>
-  <table style="border-collapse: collapse; width: 100%; margin-bottom: 15px;">
-    <thead>
-      <tr style="background-color: #f0f4f8;">
-        <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Fecha</th>
-        <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Tipo</th>
-        <th style="border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-weight: 600; color: #374151;">Detalle</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{movimientosRows}}
-    </tbody>
-  </table>
-</div>`;
+      <tr><td class="px-card" style="padding:16px 44px 4px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E6EAF2;border-radius:10px;overflow:hidden;">
+          <tr><td style="background-color:#F8FAFC;border-bottom:1px solid #E6EAF2;padding:14px 18px;">
+            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
+            <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
+          </td></tr>
+          <tr><td style="padding:0;">
+            <table class="mov-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <thead><tr style="background-color:#FFFFFF;">
+                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Fecha</th>
+                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Tipo</th>
+                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Detalle</th>
+              </tr></thead>
+              <tbody>{{movimientosRows}}</tbody>
+            </table>
+          </td></tr>
+        </table>
+      </td></tr>`;
 
   const movimientoRowTemplate = `
-<tr>
-  <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">{{fecha}}</td>
-  <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">{{tipo}}</td>
-  <td style="border: 1px solid #e5e7eb; padding: 10px; color: #4b5563;">
-    {{detalle}}
-    {{urlHtml}}
-  </td>
-</tr>`;
+              <tr>
+                <td class="causa-fecha" style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;white-space:nowrap;">{{fecha}}</td>
+                <td class="causa-tipo" style="padding:9px 14px;font-size:13px;color:#0F172A;font-weight:600;border-bottom:1px solid #EEF1F6;">{{tipo}}</td>
+                <td class="causa-detalle" style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;">{{detalle}}{{urlHtml}}</td>
+              </tr>`;
 
   // Procesar cada expediente
   for (const [key, data] of Object.entries(movementsByExpediente)) {
@@ -123,8 +120,8 @@ function processJudicialMovementsData(movementsByExpediente, user) {
       const fecha = moment(movement.movimiento.fecha).format('DD/MM/YYYY');
       
       // HTML row
-      const urlHtml = movement.movimiento.url 
-        ? `<br><a href="${movement.movimiento.url}" style="color: #2563eb; font-size: 12px; text-decoration: none;">Ver documento</a>`
+      const urlHtml = movement.movimiento.url
+        ? `<br><a href="${movement.movimiento.url}" style="color:#3A7BFF; font-size:12px; text-decoration:none; font-weight:500;">Ver documento →</a>`
         : '';
       
       movimientosRows += processTemplate(movimientoRowTemplate, {
