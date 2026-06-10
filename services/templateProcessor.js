@@ -1,5 +1,12 @@
 const { EmailTemplate } = require('../models');
 const logger = require('../config/logger');
+const { signMovementToken } = require('../utils/movementLinkToken');
+
+// Flag de rollout del visor público de documentos (/m/:token). Mientras esté
+// OFF (default), los emails siguen linkeando directo a la URL del portal
+// judicial. Encender solo cuando la página /m/:token esté deployada en el front.
+const PUBLIC_MOVEMENT_LINKS_ENABLED = process.env.PUBLIC_MOVEMENT_LINKS_ENABLED === 'true';
+const FRONT_BASE_URL = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
 
 /**
  * Procesa un template reemplazando las variables con los valores proporcionados
@@ -119,9 +126,24 @@ function processJudicialMovementsData(movementsByExpediente, user) {
     movements.forEach(movement => {
       const fecha = moment(movement.movimiento.fecha).format('DD/MM/YYYY');
       
+      // Link "Ver documento": cuando el visor público está habilitado, apunta a
+      // nuestra página /m/:token (PDF desde S3 + tracking + CTA a la app). Si el
+      // flag está OFF o falla la firma, cae a la URL original del portal.
+      const portalUrl = movement.movimiento.url;
+      let docUrl = portalUrl;
+      if (PUBLIC_MOVEMENT_LINKS_ENABLED && portalUrl && expediente.id) {
+        try {
+          const token = signMovementToken({ causaId: expediente.id, userId: movement.userId, url: portalUrl });
+          docUrl = `${FRONT_BASE_URL}/m/${token}?source=email_movimiento`;
+        } catch (err) {
+          logger.error(`No se pudo firmar el movement-link, usando URL del portal: ${err.message}`);
+          docUrl = portalUrl;
+        }
+      }
+
       // HTML row
-      const urlHtml = movement.movimiento.url
-        ? `<br><a href="${movement.movimiento.url}" style="color:#3A7BFF; font-size:12px; text-decoration:none; font-weight:500;">Ver documento →</a>`
+      const urlHtml = docUrl
+        ? `<br><a href="${docUrl}" style="color:#3A7BFF; font-size:12px; text-decoration:none; font-weight:500;">Ver documento →</a>`
         : '';
       
       movimientosRows += processTemplate(movimientoRowTemplate, {
@@ -133,8 +155,8 @@ function processJudicialMovementsData(movementsByExpediente, user) {
       
       // Text version
       movimientosText += `- ${fecha}: ${movement.movimiento.tipo} - ${movement.movimiento.detalle}\n`;
-      if (movement.movimiento.url) {
-        movimientosText += `  Ver documento: ${movement.movimiento.url}\n`;
+      if (docUrl) {
+        movimientosText += `  Ver documento: ${docUrl}\n`;
       }
     });
     
