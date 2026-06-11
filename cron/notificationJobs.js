@@ -42,6 +42,8 @@ async function calendarNotificationJob() {
     // de cualquier tipo (email, navegador o ambas)
     const users = await User.find({
       $and: [
+        // No notificar a cuentas desactivadas
+        { isActive: { $ne: false } },
         { 'preferences.notifications.user.calendar': { $ne: false } },
         {
           $or: [
@@ -207,6 +209,8 @@ async function taskNotificationJob() {
     // Se notifica cuando taskExpiration no sea explícitamente false
     const users = await User.find({
       $and: [
+        // No notificar a cuentas desactivadas
+        { isActive: { $ne: false } },
         { 'preferences.notifications.user.taskExpiration': { $ne: false } },
         {
           $or: [
@@ -372,6 +376,8 @@ async function movementNotificationJob() {
     // de cualquier tipo (email, navegador o ambas)
     const users = await User.find({
       $and: [
+        // No notificar a cuentas desactivadas
+        { isActive: { $ne: false } },
         { 'preferences.notifications.user.expiration': { $ne: false } },
         {
           $or: [
@@ -802,6 +808,28 @@ async function judicialMovementNotificationJob() {
           continue;
         }
 
+        // No notificar a cuentas desactivadas: marcar los pendientes como failed
+        // (estado terminal) para que no se reprocesen en cada corrida.
+        if (user.isActive === false) {
+          logger.info(`Usuario ${userId} desactivado, omitiendo notificación de movimientos judiciales`);
+          await JudicialMovement.updateMany(
+            { userId, notificationStatus: 'pending' },
+            {
+              $set: { notificationStatus: 'failed' },
+              $push: {
+                notifications: {
+                  date: new Date(),
+                  type: 'system',
+                  success: false,
+                  details: 'Usuario desactivado'
+                }
+              }
+            }
+          );
+          notificationStats.fallidos++;
+          continue;
+        }
+
         // Enviar notificaciones
         const result = await sendJudicialMovementNotifications({
           userId: user._id,
@@ -896,6 +924,8 @@ async function folderInactivityNotificationJob() {
     // Se notifica cuando inactivity no sea explícitamente false
     const users = await User.find({
       $and: [
+        // No notificar a cuentas desactivadas
+        { isActive: { $ne: false } },
         { 'preferences.notifications.user.inactivity': { $ne: false } },
         { 'preferences.notifications.channels.email': { $ne: false } }
       ]

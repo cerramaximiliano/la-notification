@@ -100,6 +100,16 @@ async function sendMovementNotifications({
             };
         }
 
+        // No notificar a cuentas desactivadas
+        if (user.isActive === false) {
+            return {
+                success: false,
+                statusCode: 200,
+                skipped: true,
+                message: 'Usuario desactivado, notificación omitida'
+            };
+        }
+
         // Verificar si las notificaciones por email están habilitadas
         const preferences = user.preferences || {};
         const notifications = preferences.notifications || {};
@@ -394,6 +404,16 @@ async function sendCalendarNotifications({
             };
         }
 
+        // No notificar a cuentas desactivadas
+        if (user.isActive === false) {
+            return {
+                success: false,
+                statusCode: 200,
+                skipped: true,
+                message: 'Usuario desactivado, notificación omitida'
+            };
+        }
+
         // Verificar si las notificaciones por email están habilitadas
         const preferences = user.preferences || {};
         const notifications = preferences.notifications || {};
@@ -660,6 +680,16 @@ async function sendTaskNotifications({
                 success: false,
                 statusCode: 404,
                 message: 'Usuario no encontrado'
+            };
+        }
+
+        // No notificar a cuentas desactivadas
+        if (user.isActive === false) {
+            return {
+                success: false,
+                statusCode: 200,
+                skipped: true,
+                message: 'Usuario desactivado, notificación omitida'
             };
         }
 
@@ -1094,6 +1124,16 @@ async function sendJudicialMovementNotifications({
             };
         }
 
+        // No notificar a cuentas desactivadas
+        if (user.isActive === false) {
+            return {
+                success: false,
+                statusCode: 200,
+                skipped: true,
+                message: 'Usuario desactivado, notificación omitida'
+            };
+        }
+
         // Verificar preferencias de notificación
         const preferences = user.preferences || {};
         const notifications = preferences.notifications || {};
@@ -1373,6 +1413,16 @@ async function sendFolderInactivityNotifications({
                 success: false,
                 statusCode: 404,
                 message: 'Usuario no encontrado'
+            };
+        }
+
+        // No notificar a cuentas desactivadas
+        if (user.isActive === false) {
+            return {
+                success: false,
+                statusCode: 200,
+                skipped: true,
+                message: 'Usuario desactivado, notificación omitida'
             };
         }
 

@@ -167,7 +167,10 @@ const UserSchema = new Schema(
       enum: ['USER_ROLE', 'ADMIN_ROLE', 'PREMIUM_ROLE'],
       default: 'USER_ROLE'
     },
-    active: {
+    // Estado de la cuenta. La fuente de verdad la escribe law-analytics-server
+    // sobre la MISMA colección `usuarios` usando el campo `isActive`.
+    // Una cuenta con isActive=false está desactivada y NO debe recibir notificaciones.
+    isActive: {
       type: Boolean,
       default: true
     },
@@ -186,7 +189,7 @@ const UserSchema = new Schema(
 
 // Índices
 // email ya tiene índice único definido en el schema
-UserSchema.index({ active: 1 });
+UserSchema.index({ isActive: 1 });
 UserSchema.index({ role: 1 });
 
 const User = mongoose.model("User", UserSchema, "usuarios");

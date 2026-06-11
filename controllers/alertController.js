@@ -53,7 +53,7 @@ const createCustomAlert = async (req, res) => {
     // Verificar que los usuarios existan
     const validUsers = await User.find({
       _id: { $in: userIds },
-      active: { $ne: false }
+      isActive: { $ne: false }
     }).select('_id email name preferences');
 
     if (validUsers.length === 0) {
@@ -268,7 +268,7 @@ const createCustomAlert = async (req, res) => {
  * @body {
  *   filter: { // Filtros para seleccionar usuarios
  *     role?: string,
- *     active?: boolean,
+ *     isActive?: boolean, // por defecto se excluyen cuentas desactivadas (isActive=false)
  *     subscriptionPlan?: string,
  *     // otros filtros...
  *   },
@@ -317,7 +317,13 @@ const createBulkAlerts = async (req, res) => {
 
     // Construir query de usuarios
     const userQuery = { ...filter };
-    
+
+    // Nunca notificar a cuentas desactivadas (isActive=false), salvo que el caller
+    // lo pida explícitamente pasando isActive en el filtro.
+    if (!Object.prototype.hasOwnProperty.call(userQuery, 'isActive')) {
+      userQuery.isActive = { $ne: false };
+    }
+
     // Si respectNotificationPreferences es true, filtrar usuarios con notificaciones habilitadas
     if (options.respectNotificationPreferences) {
       userQuery['preferences.notifications.channels.browser'] = true;
