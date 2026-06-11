@@ -3,6 +3,7 @@ const moment = require("moment");
 const logger = require("../config/logger");
 const { sendEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate } = require("../models");
+const JudicialNotificationConfig = require("../models/Judicial-notification-config");
 const { addNotificationAtomic } = require("./notificationHelper");
 const { getProcessedTemplate, processJudicialMovementsData } = require("./templateProcessor");
 
@@ -1196,8 +1197,21 @@ async function sendJudicialMovementNotifications({
             });
         }
 
+        // Flag del visor público (/m/:token) desde el config doc. Se lee por
+        // batch de envío → toggleable en runtime (Mongo) sin restart. Si falla
+        // la carga, default seguro: links al portal (usePublicMovementLinks=false).
+        let movementLinkOptions = {};
+        try {
+            const notifConfig = await JudicialNotificationConfig.getConfig();
+            movementLinkOptions = {
+                usePublicMovementLinks: notifConfig?.contentConfig?.usePublicMovementLinks === true,
+            };
+        } catch (cfgErr) {
+            logger.warn(`No se pudo cargar JudicialNotificationConfig para movement links, usando portal: ${cfgErr.message}`);
+        }
+
         // Usar el template de la base de datos
-        const templateVariables = processJudicialMovementsData(movementsByExpediente, user);
+        const templateVariables = processJudicialMovementsData(movementsByExpediente, user, movementLinkOptions);
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
         
         const subject = processedTemplate.subject;

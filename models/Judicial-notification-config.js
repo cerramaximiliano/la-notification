@@ -130,6 +130,15 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         groupMovementsByExpediente: {
             type: Boolean,
             default: true
+        },
+        // Apuntar el link "Ver documento" del email a la página pública propia
+        // /m/:token (visor de PDF desde S3 + tracking) en vez de la URL del
+        // portal judicial. Flag de rollout: encender solo cuando la página
+        // /m/:token esté deployada en el front. Toggleable en runtime (el flujo
+        // de email lee getConfig() por batch — no requiere restart).
+        usePublicMovementLinks: {
+            type: Boolean,
+            default: false
         }
     },
 

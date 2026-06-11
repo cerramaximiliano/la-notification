@@ -2,11 +2,11 @@ const { EmailTemplate } = require('../models');
 const logger = require('../config/logger');
 const { signMovementToken } = require('../utils/movementLinkToken');
 
-// Flag de rollout del visor público de documentos (/m/:token). Mientras esté
-// OFF (default), los emails siguen linkeando directo a la URL del portal
-// judicial. Encender solo cuando la página /m/:token esté deployada en el front.
-const PUBLIC_MOVEMENT_LINKS_ENABLED = process.env.PUBLIC_MOVEMENT_LINKS_ENABLED === 'true';
-const FRONT_BASE_URL = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
+// URL base del front para los links /m/:token (override por opts/env; default
+// al dominio de prod). El FLAG de rollout NO vive acá: viene del config doc
+// JudicialNotificationConfig (contentConfig.usePublicMovementLinks), pasado
+// como opción por el caller → toggleable en runtime sin restart.
+const DEFAULT_FRONT_BASE_URL = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
 
 /**
  * Procesa un template reemplazando las variables con los valores proporcionados
@@ -76,11 +76,17 @@ async function getProcessedTemplate(category, name, variables) {
  * Procesa datos específicos para movimientos judiciales
  * @param {Array} movementsByExpediente - Movimientos agrupados por expediente
  * @param {Object} user - Usuario destinatario
+ * @param {Object} [options] - { usePublicMovementLinks, frontBaseUrl } desde el config doc
  * @returns {Object} - Variables procesadas para el template
  */
-function processJudicialMovementsData(movementsByExpediente, user) {
+function processJudicialMovementsData(movementsByExpediente, user, options = {}) {
   const moment = require('moment');
-  
+
+  // Flag de visor público + base URL: vienen del config doc (caller), con
+  // fallback seguro a OFF / dominio de prod.
+  const usePublicLinks = options.usePublicMovementLinks === true;
+  const frontBaseUrl = options.frontBaseUrl || DEFAULT_FRONT_BASE_URL;
+
   // Generar HTML para todos los expedientes
   let expedientesHtml = '';
   let expedientesText = '';
@@ -131,10 +137,10 @@ function processJudicialMovementsData(movementsByExpediente, user) {
       // flag está OFF o falla la firma, cae a la URL original del portal.
       const portalUrl = movement.movimiento.url;
       let docUrl = portalUrl;
-      if (PUBLIC_MOVEMENT_LINKS_ENABLED && portalUrl && expediente.id) {
+      if (usePublicLinks && portalUrl && expediente.id) {
         try {
           const token = signMovementToken({ causaId: expediente.id, userId: movement.userId, url: portalUrl });
-          docUrl = `${FRONT_BASE_URL}/m/${token}?source=email_movimiento`;
+          docUrl = `${frontBaseUrl}/m/${token}?source=email_movimiento`;
         } catch (err) {
           logger.error(`No se pudo firmar el movement-link, usando URL del portal: ${err.message}`);
           docUrl = portalUrl;
