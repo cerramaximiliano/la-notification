@@ -198,8 +198,103 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
   };
 }
 
+// Header de sección dentro de la card blanca (eyebrow azul). Se usa para separar
+// "Notificaciones" de "Movimientos" cuando el email trae ambos.
+function sectionHeaderHtml(title) {
+  return `
+      <tr><td class="px-card" style="padding:26px 44px 2px 44px;">
+        <p style="margin:0;font-size:12px;color:#3A7BFF;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">${title}</p>
+      </td></tr>`;
+}
+
+/**
+ * Procesa las cédulas (notificaciones) agrupadas por expediente para el slot
+ * {{cedulasHtml}}. Mismo diseño de card que los movimientos. Incluye su propio
+ * header de sección "Notificaciones recibidas".
+ * @param {Object} cedulasByExpediente - { [expedienteId]: { expediente, cedulas: [] } }
+ * @returns {Object} { cedulasHtml, cedulasText, cedulasExpedienteKeys }
+ */
+function processJudicialCedulasData(cedulasByExpediente) {
+  const moment = require('moment');
+
+  const expedienteTemplate = `
+      <tr><td class="px-card" style="padding:16px 44px 4px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E6EAF2;border-radius:10px;overflow:hidden;">
+          <tr><td style="background-color:#F8FAFC;border-bottom:1px solid #E6EAF2;padding:14px 18px;">
+            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
+            <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
+          </td></tr>
+          <tr><td style="padding:0;">
+            <table class="mov-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <thead><tr style="background-color:#FFFFFF;">
+                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Fecha</th>
+                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Tipo</th>
+                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Detalle</th>
+              </tr></thead>
+              <tbody>{{cedulasRows}}</tbody>
+            </table>
+          </td></tr>
+        </table>
+      </td></tr>`;
+
+  const cedulaRowTemplate = `
+              <tr>
+                <td style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;white-space:nowrap;">{{fecha}}</td>
+                <td style="padding:9px 14px;font-size:13px;color:#0F172A;font-weight:600;border-bottom:1px solid #EEF1F6;">{{tipo}}</td>
+                <td style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;">{{detalle}}</td>
+              </tr>`;
+
+  let cedulasHtml = '';
+  let cedulasText = '';
+  const keys = Object.keys(cedulasByExpediente);
+
+  if (keys.length === 0) {
+    return { cedulasHtml: '', cedulasText: '', cedulasExpedienteKeys: [] };
+  }
+
+  for (const [, data] of Object.entries(cedulasByExpediente)) {
+    const { expediente, cedulas } = data;
+
+    let cedulasRows = '';
+    cedulas.forEach(c => {
+      const fecha = c.cedula && c.cedula.fecha ? moment(c.cedula.fecha).format('DD/MM/YYYY') : '';
+      const tipo = (c.cedula && c.cedula.tipo) || 'Cédula';
+      // Detalle compuesto: N° de cédula + oficina emisora (lo más útil para el lector).
+      const partes = [];
+      if (c.cedula && c.cedula.numeroCedula) partes.push(`N° ${c.cedula.numeroCedula}`);
+      if (c.cedula && c.cedula.oficina) partes.push(c.cedula.oficina);
+      const detalle = partes.join(' — ') || 'Cédula recibida';
+
+      cedulasRows += processTemplate(cedulaRowTemplate, { fecha, tipo, detalle });
+      cedulasText += `- ${fecha}: ${tipo} - ${detalle}\n`;
+    });
+
+    const numberYear = expediente.year != null && expediente.year !== ''
+      ? `${expediente.number}/${expediente.year}`
+      : `${expediente.number ?? ''}`.trim() || '(sin nº)';
+
+    cedulasHtml += processTemplate(expedienteTemplate, {
+      numberYear,
+      fuero: expediente.fuero,
+      caratula: expediente.caratula,
+      cedulasRows
+    });
+
+    cedulasText += `\nExpediente ${numberYear} - ${expediente.fuero}\n`;
+    cedulasText += `Carátula: ${expediente.caratula}\n\n`;
+  }
+
+  // Prepend el header de sección.
+  cedulasHtml = sectionHeaderHtml('Notificaciones recibidas') + cedulasHtml;
+  cedulasText = `NOTIFICACIONES RECIBIDAS\n${cedulasText}`;
+
+  return { cedulasHtml, cedulasText, cedulasExpedienteKeys: keys };
+}
+
 module.exports = {
   processTemplate,
   getProcessedTemplate,
-  processJudicialMovementsData
+  processJudicialMovementsData,
+  processJudicialCedulasData,
+  sectionHeaderHtml
 };

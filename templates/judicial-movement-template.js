@@ -10,14 +10,21 @@
 module.exports = {
   category: 'notification',
   name: 'judicial-movements',
-  subject: 'Law||Analytics: Nuevos movimientos en {{expedientesCount}} expediente(s)',
-  preheader: 'Se registraron nuevos movimientos en tus expedientes',
-  description: 'Template para notificar movimientos judiciales a usuarios (diseño onboarding)',
-  tags: ['judicial', 'movements', 'notifications', 'legal'],
+  subject: 'Law||Analytics: {{novedadLabel}} en {{totalExpedientesCount}} expediente(s)',
+  preheader: 'Se registraron novedades en tus expedientes',
+  description: 'Template para notificar movimientos y notificaciones (cédulas) a usuarios (diseño onboarding)',
+  tags: ['judicial', 'movements', 'cedulas', 'notifications', 'legal'],
   variables: [
     'userName',
     'userEmail',
+    'novedadLabel',
+    'tituloPrincipal',
+    'ledeText',
+    'totalExpedientesCount',
     'expedientesCount',
+    'cedulasHtml',
+    'cedulasText',
+    'movimientosHeader',
     'expedientesHtml',
     'expedientesText'
   ],
@@ -67,9 +74,11 @@ module.exports = {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border-radius:14px;box-shadow:0 1px 0 rgba(58,123,255,0.04),0 12px 32px -16px rgba(15,23,42,0.12);">
       <tr><td class="px-card" style="padding:40px 44px 8px 44px;">
         <p style="margin:0 0 16px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.14em;text-transform:uppercase;font-weight:600;">Novedades en tus causas</p>
-        <h1 class="h1-display" style="margin:0 0 16px 0;font-size:30px;line-height:1.16;letter-spacing:-0.5px;font-weight:600;color:#0F172A;">Tenés nuevos movimientos</h1>
-        <p style="margin:0;font-size:16px;line-height:1.6;color:#334155;">Hola {{userName}}, se registraron movimientos nuevos en {{expedientesCount}} expediente(s). Acá tenés el detalle.</p>
+        <h1 class="h1-display" style="margin:0 0 16px 0;font-size:30px;line-height:1.16;letter-spacing:-0.5px;font-weight:600;color:#0F172A;">{{tituloPrincipal}}</h1>
+        <p style="margin:0;font-size:16px;line-height:1.6;color:#334155;">Hola {{userName}}, {{ledeText}}</p>
       </td></tr>
+{{cedulasHtml}}
+{{movimientosHeader}}
 {{expedientesHtml}}
       <tr><td class="px-card" style="padding:20px 44px 12px 44px;">
         <table role="presentation" class="cta-wrap" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -94,13 +103,12 @@ module.exports = {
   </td></tr>
 </table></td></tr></table></body></html>`,
 
-  textContent: `Nuevos movimientos judiciales
+  textContent: `{{novedadLabel}}
 
-Hola {{userName}},
+Hola {{userName}}, {{ledeText}}
 
-Se registraron nuevos movimientos en {{expedientesCount}} de tus expedientes:
-
-{{expedientesText}}
+{{cedulasText}}
+{{movimientosHeaderText}}{{expedientesText}}
 
 Ver el detalle completo en: https://www.lawanalytics.app/apps/folders/list
 

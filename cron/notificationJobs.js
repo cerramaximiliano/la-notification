@@ -11,6 +11,7 @@ const {
   sendFolderInactivityNotifications,
 } = require('../services/notifications');
 const { coordinateJudicialMovements } = require('../services/judicialMovementCoordinator');
+const { coordinateJudicialCedulas } = require('../services/judicialCedulaCoordinator');
 
 
 
@@ -21,6 +22,7 @@ const Task = require('../models/Task');
 const Movement = require('../models/Movement');
 const Alert = require("../models/Alert");
 const JudicialMovement = require('../models/JudicialMovement');
+const JudicialCedula = require('../models/JudicialCedula');
 const NotificationLog = require('../models/NotificationLog');
 const Folder = require('../models/Folder');
 const logger = require('../config/logger');
@@ -759,6 +761,20 @@ async function judicialMovementNotificationJob() {
       // Continuamos con las notificaciones aunque falle la coordinación
     }
 
+    // PASO 1b: COORDINACIÓN DE CÉDULAS (notificaciones electrónicas)
+    // Crea documentos JudicialCedula faltantes desde la colección pjn-notifications.
+    try {
+      const cedulaStats = await coordinateJudicialCedulas({ models: { JudicialCedula } });
+      if (cedulaStats.cedulasCreadas > 0) {
+        logger.info(`[COORDINACIÓN] Se crearon ${cedulaStats.cedulasCreadas} documentos de cédula faltantes`);
+      }
+      if (cedulaStats.errores > 0) {
+        logger.warn(`[COORDINACIÓN] ${cedulaStats.errores} errores coordinando cédulas`);
+      }
+    } catch (cedCoordError) {
+      logger.error(`[COORDINACIÓN] Error en coordinación de cédulas: ${cedCoordError.message}`);
+    }
+
     // PASO 2: NOTIFICACIÓN
     // Buscar todos los usuarios que tienen movimientos pendientes de notificar
     logger.info('[NOTIFICACIÓN] Buscando movimientos pendientes de notificar...');
@@ -830,17 +846,17 @@ async function judicialMovementNotificationJob() {
           continue;
         }
 
-        // Enviar notificaciones
+        // Enviar notificaciones (movimientos + cédulas pendientes del usuario)
         const result = await sendJudicialMovementNotifications({
           userId: user._id,
-          models: { User, JudicialMovement, NotificationLog, Alert },
+          models: { User, JudicialMovement, NotificationLog, Alert, JudicialCedula },
           utilities: { sendEmail, logger, moment }
         });
 
         if (result.success && result.notified) {
           notificationStats.enviadas += result.count || 0;
           notificationStats.exitosos++;
-          logger.info(`Notificación de movimientos judiciales enviada a ${user.email} con ${result.count} movimientos`);
+          logger.info(`Notificación judicial enviada a ${user.email} con ${result.count} novedades`);
         } else if (!result.success) {
           notificationStats.fallidos++;
           logger.error(`Error al enviar notificaciones judiciales a ${user.email}: ${result.message}`);
@@ -849,6 +865,60 @@ async function judicialMovementNotificationJob() {
       } catch (userError) {
         notificationStats.fallidos++;
         logger.error(`Error procesando movimientos judiciales para usuario ${group._id}: ${userError.message}`);
+      }
+    }
+
+    // PASO 2b: usuarios con CÉDULAS pendientes pero SIN movimientos (no cubiertos arriba).
+    // Los que tienen ambos ya recibieron su email (sendJudicialMovementNotifications
+    // incluye las cédulas del usuario en el mismo envío).
+    const movementUserIds = new Set(pendingMovements.map(g => String(g._id)));
+    const pendingCedulasByUser = await JudicialCedula.aggregate([
+      { $match: { notificationStatus: 'pending', 'notificationSettings.notifyAt': { $lte: now } } },
+      { $group: { _id: '$userId', count: { $sum: 1 } } }
+    ]);
+    const cedulaOnlyUsers = pendingCedulasByUser.filter(g => !movementUserIds.has(String(g._id)));
+    notificationStats.usuariosPendientes += cedulaOnlyUsers.length;
+    logger.info(`[NOTIFICACIÓN] ${cedulaOnlyUsers.length} usuarios con solo cédulas pendientes`);
+
+    for (const group of cedulaOnlyUsers) {
+      try {
+        const userId = group._id;
+        const user = await User.findById(userId);
+
+        if (!user) {
+          await JudicialCedula.updateMany(
+            { userId, notificationStatus: 'pending' },
+            { $set: { notificationStatus: 'failed' }, $push: { notifications: { date: new Date(), type: 'system', success: false, details: 'Usuario no encontrado' } } }
+          );
+          notificationStats.fallidos++;
+          continue;
+        }
+        if (user.isActive === false) {
+          await JudicialCedula.updateMany(
+            { userId, notificationStatus: 'pending' },
+            { $set: { notificationStatus: 'failed' }, $push: { notifications: { date: new Date(), type: 'system', success: false, details: 'Usuario desactivado' } } }
+          );
+          notificationStats.fallidos++;
+          continue;
+        }
+
+        const result = await sendJudicialMovementNotifications({
+          userId: user._id,
+          models: { User, JudicialMovement, NotificationLog, Alert, JudicialCedula },
+          utilities: { sendEmail, logger, moment }
+        });
+
+        if (result.success && result.notified) {
+          notificationStats.enviadas += result.count || 0;
+          notificationStats.exitosos++;
+          logger.info(`Notificación de cédulas enviada a ${user.email} con ${result.cedulasCount} cédulas`);
+        } else if (!result.success) {
+          notificationStats.fallidos++;
+          logger.error(`Error al enviar cédulas a ${user.email}: ${result.message}`);
+        }
+      } catch (userError) {
+        notificationStats.fallidos++;
+        logger.error(`Error procesando cédulas para usuario ${group._id}: ${userError.message}`);
       }
     }
 

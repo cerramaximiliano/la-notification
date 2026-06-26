@@ -11,6 +11,7 @@ const Movement = require('./Movement');
 const Alert = require('./Alert');
 const NotificationLog = require('./NotificationLog');
 const JudicialMovement = require('./JudicialMovement');
+const JudicialCedula = require('./JudicialCedula');
 const EmailTemplate = require('./EmailTemplate');
 const Folder = require('./Folder');
 
@@ -23,6 +24,7 @@ module.exports = {
   Alert,
   NotificationLog,
   JudicialMovement,
+  JudicialCedula,
   EmailTemplate,
   Folder
 };

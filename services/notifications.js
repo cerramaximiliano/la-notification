@@ -5,7 +5,7 @@ const { sendEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate } = require("../models");
 const JudicialNotificationConfig = require("../models/Judicial-notification-config");
 const { addNotificationAtomic } = require("./notificationHelper");
-const { getProcessedTemplate, processJudicialMovementsData } = require("./templateProcessor");
+const { getProcessedTemplate, processJudicialMovementsData, processJudicialCedulasData, sectionHeaderHtml } = require("./templateProcessor");
 
 /**
  * Genera el wrapper HTML base para todos los emails
@@ -1102,9 +1102,11 @@ const helpers = {
 async function sendJudicialMovementNotifications({
     userId: requestUserId,
     user: reqUser,
-    models: { User, JudicialMovement, NotificationLog, Alert },
+    models: { User, JudicialMovement, NotificationLog, Alert, JudicialCedula: JudicialCedulaModel },
     utilities: { sendEmail, logger, moment }
 }) {
+    // Fallback si el caller no pasó el modelo (compat con llamadas viejas).
+    const JudicialCedula = JudicialCedulaModel || require('../models/JudicialCedula');
     try {
         // Obtener userId
         const userId = requestUserId || (reqUser && reqUser._id);
@@ -1157,11 +1159,19 @@ async function sendJudicialMovementNotifications({
             'notificationSettings.notifyAt': { $lte: now }
         }).sort({ 'movimiento.fecha': -1 });
 
-        if (pendingMovements.length === 0) {
+        // Buscar cédulas (notificaciones electrónicas) pendientes del usuario.
+        // Van en el MISMO email, en una sección "Notificaciones" arriba de los movimientos.
+        const pendingCedulas = await JudicialCedula.find({
+            userId,
+            notificationStatus: 'pending',
+            'notificationSettings.notifyAt': { $lte: now }
+        }).sort({ 'cedula.fecha': -1 });
+
+        if (pendingMovements.length === 0 && pendingCedulas.length === 0) {
             return {
                 success: true,
                 statusCode: 200,
-                message: 'No hay movimientos judiciales pendientes de notificar',
+                message: 'No hay movimientos ni notificaciones judiciales pendientes',
                 notified: false
             };
         }
@@ -1180,6 +1190,17 @@ async function sendJudicialMovementNotifications({
             }
             movementsByExpediente[key].movements.push(movement);
         });
+
+        // Agrupar cédulas por expediente (misma key que movimientos: expediente.id).
+        const cedulasByExpediente = {};
+        pendingCedulas.forEach(cedula => {
+            const key = cedula.expediente.id || `${cedula.expediente.number}/${cedula.expediente.year ?? ''}`;
+            if (!cedulasByExpediente[key]) {
+                cedulasByExpediente[key] = { expediente: cedula.expediente, cedulas: [] };
+            }
+            cedulasByExpediente[key].cedulas.push(cedula);
+        });
+        const notifiedCedulaIds = pendingCedulas.map(c => c._id);
 
         // IDs de movimientos notificados
         const notifiedMovementIds = [];
@@ -1210,8 +1231,47 @@ async function sendJudicialMovementNotifications({
             logger.warn(`No se pudo cargar JudicialNotificationConfig para movement links, usando portal: ${cfgErr.message}`);
         }
 
-        // Usar el template de la base de datos
-        const templateVariables = processJudicialMovementsData(movementsByExpediente, user, movementLinkOptions);
+        // Variables de movimientos (slot {{expedientesHtml}}) + cédulas (slot {{cedulasHtml}}).
+        const movementVars = processJudicialMovementsData(movementsByExpediente, user, movementLinkOptions);
+        const cedulaData = processJudicialCedulasData(cedulasByExpediente);
+
+        const movKeys = Object.keys(movementsByExpediente);
+        const cedKeys = cedulaData.cedulasExpedienteKeys;
+        const totalExpedientesCount = new Set([...movKeys, ...cedKeys]).size;
+        const hasMov = movKeys.length > 0;
+        const hasCed = cedKeys.length > 0;
+
+        // Asunto / título / lede adaptativos según qué traiga el email.
+        let novedadLabel, tituloPrincipal, ledeText;
+        if (hasMov && hasCed) {
+            novedadLabel = 'Nuevas novedades';
+            tituloPrincipal = 'Tenés nuevas novedades';
+            ledeText = `tenés notificaciones nuevas y movimientos en ${totalExpedientesCount} expediente(s). Acá tenés el detalle.`;
+        } else if (hasCed) {
+            novedadLabel = 'Nuevas notificaciones';
+            tituloPrincipal = 'Tenés nuevas notificaciones';
+            ledeText = `recibiste notificaciones nuevas en ${totalExpedientesCount} expediente(s). Acá tenés el detalle.`;
+        } else {
+            novedadLabel = 'Nuevos movimientos';
+            tituloPrincipal = 'Tenés nuevos movimientos';
+            ledeText = `se registraron movimientos nuevos en ${totalExpedientesCount} expediente(s). Acá tenés el detalle.`;
+        }
+
+        // Header "Movimientos" solo cuando el email trae ambas secciones (para separarlas).
+        const movimientosHeader = (hasMov && hasCed) ? sectionHeaderHtml('Movimientos') : '';
+        const movimientosHeaderText = (hasMov && hasCed) ? 'MOVIMIENTOS\n' : '';
+
+        const templateVariables = {
+            ...movementVars,
+            cedulasHtml: cedulaData.cedulasHtml,
+            cedulasText: cedulaData.cedulasText,
+            novedadLabel,
+            tituloPrincipal,
+            ledeText,
+            totalExpedientesCount,
+            movimientosHeader,
+            movimientosHeaderText
+        };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
         
         const subject = processedTemplate.subject;
@@ -1304,6 +1364,31 @@ async function sendJudicialMovementNotifications({
             logger.error(`Error actualizando movimientos judiciales:`, updateError);
         }
 
+        // Actualizar cédulas notificadas
+        if (notifiedCedulaIds.length > 0) {
+            try {
+                await JudicialCedula.updateMany(
+                    { _id: { $in: notifiedCedulaIds } },
+                    {
+                        $set: { notificationStatus: emailStatus },
+                        $push: {
+                            notifications: {
+                                date: new Date(),
+                                type: 'email',
+                                success: emailStatus === 'sent',
+                                details: emailStatus === 'sent'
+                                    ? `Notificación enviada a ${user.email}`
+                                    : `Error enviando notificación: ${failureReason}`
+                            }
+                        }
+                    }
+                );
+                logger.info(`Estado actualizado para ${notifiedCedulaIds.length} cédulas a: ${emailStatus}`);
+            } catch (cedErr) {
+                logger.error(`Error actualizando cédulas: ${cedErr.message}`);
+            }
+        }
+
         // Registrar en NotificationLog
         for (const movement of pendingMovements) {
             try {
@@ -1376,16 +1461,19 @@ async function sendJudicialMovementNotifications({
             }
         }
 
-        logger.info(`Notificación de movimientos judiciales enviada a ${user.email} para ${pendingMovements.length} movimientos`);
+        logger.info(`Notificación judicial enviada a ${user.email}: ${pendingMovements.length} movimientos + ${pendingCedulas.length} cédulas`);
 
         return {
             success: true,
             statusCode: 200,
-            message: `Se notificaron ${pendingMovements.length} movimientos judiciales`,
-            count: pendingMovements.length,
+            message: `Se notificaron ${pendingMovements.length} movimientos y ${pendingCedulas.length} notificaciones`,
+            count: pendingMovements.length + pendingCedulas.length,
+            movementsCount: pendingMovements.length,
+            cedulasCount: pendingCedulas.length,
             notified: true,
             userId: userId,
-            movementIds: notifiedMovementIds
+            movementIds: notifiedMovementIds,
+            cedulaIds: notifiedCedulaIds
         };
 
     } catch (error) {
