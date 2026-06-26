@@ -17,6 +17,18 @@ const { calculateNotifyAt } = require('./judicialMovementCoordinator');
 const SOURCE_COLLECTION = 'pjn-notifications';
 const BATCH_LIMIT = 500;
 
+// Día calendario en Argentina (UTC-3 fijo; Argentina no usa DST).
+function argentinaDayStr(date) {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  return new Date(d.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function isTodayART(date) {
+  const day = argentinaDayStr(date);
+  return day != null && day === argentinaDayStr(new Date());
+}
+
 function deriveFuero(expediente) {
   const numeracion = expediente && expediente.numeracion;
   if (numeracion && typeof numeracion === 'string') {
@@ -39,6 +51,7 @@ async function coordinateJudicialCedulas(options = {}) {
     notificacionesOrigen: 0,
     cedulasCreadas: 0,
     cedulasExistentes: 0,
+    omitidasNoHoy: 0,
     sinUsuario: 0,
     errores: 0
   };
@@ -73,6 +86,15 @@ async function coordinateJudicialCedulas(options = {}) {
         const expedienteId = expediente.id != null ? String(expediente.id) : null;
         if (!expedienteId) {
           stats.errores++;
+          await sourceColl.updateOne({ _id: doc._id }, { $set: { notified: true, notifiedAt: new Date() } });
+          continue;
+        }
+
+        // Solo notificar cédulas del día actual. Las viejas (lookback/catch-up,
+        // ya recibidas por el usuario) se marcan como coordinadas SIN enviar email.
+        const fechaCedula = doc.fecha || doc.createdAt;
+        if (!isTodayART(fechaCedula)) {
+          stats.omitidasNoHoy++;
           await sourceColl.updateOne({ _id: doc._id }, { $set: { notified: true, notifiedAt: new Date() } });
           continue;
         }
