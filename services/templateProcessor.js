@@ -8,6 +8,9 @@ const { signMovementToken } = require('../utils/movementLinkToken');
 // como opción por el caller → toggleable en runtime sin restart.
 const DEFAULT_FRONT_BASE_URL = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
 
+// URL base del server (para el pixel de apertura /api/public/movimientos/:token/open.gif).
+const DEFAULT_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'https://server.lawanalytics.app';
+
 /**
  * Procesa un template reemplazando las variables con los valores proporcionados
  * @param {string} template - String del template con variables {{variable}} o ${variable}
@@ -86,40 +89,62 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
   // fallback seguro a OFF / dominio de prod.
   const usePublicLinks = options.usePublicMovementLinks === true;
   const frontBaseUrl = options.frontBaseUrl || DEFAULT_FRONT_BASE_URL;
+  // Mapa expedienteKey → folderId (resuelto por el caller) para el CTA
+  // "Ver causa completa" por card. Vacío = sin CTA por card.
+  const folderIdByExpediente = options.folderIdByExpediente || {};
+  // Primer token firmado del email — se reusa para el pixel de apertura.
+  let firstToken = null;
 
   // Generar HTML para todos los expedientes
   let expedientesHtml = '';
   let expedientesText = '';
-  
-  // Card por expediente (diseño onboarding: card redondeada con header tintado
-  // + tabla de movimientos). Se inyecta como filas <tr> dentro de la card blanca
-  // del template DB notification/judicial-movements (slot {{expedientesHtml}}).
-  const expedienteTemplate = `
-      <tr><td class="px-card" style="padding:16px 44px 4px 44px;">
+
+  // Rediseño 2026-07 (v3): los expedientes van DENTRO de un contenedor único de
+  // sección, cuya banda superior es el título ("Movimientos nuevos"). Sección y
+  // contenido son un solo bloque físico — antes cada expediente era una card
+  // suelta y el header de sección flotaba desconectado arriba.
+  //
+  // Jerarquía de tintes: banda de sección (azul suave #EFF4FF) > header de
+  // expediente (gris #F8FAFC) > filas blancas.
+  const sectionTitle = options.sectionTitle || 'Movimientos nuevos';
+  const sectionWrapperTemplate = `
+      <tr><td class="px-card" style="padding:20px 44px 4px 44px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E6EAF2;border-radius:10px;overflow:hidden;">
-          <tr><td style="background-color:#F8FAFC;border-bottom:1px solid #E6EAF2;padding:14px 18px;">
-            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
-            <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
-          </td></tr>
-          <tr><td style="padding:0;">
-            <table class="mov-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <thead><tr style="background-color:#FFFFFF;">
-                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Fecha</th>
-                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Tipo</th>
-                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Detalle</th>
-              </tr></thead>
-              <tbody>{{movimientosRows}}</tbody>
-            </table>
-          </td></tr>
+          <tr><td style="background-color:#EFF4FF;padding:11px 18px;">
+            <p style="margin:0;font-size:11px;color:#3A7BFF;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">{{sectionTitle}}</p>
+          </td></tr>{{segments}}
         </table>
       </td></tr>`;
 
+  // Segmento por expediente (v4): el bloque de la causa es una SUPERFICIE gris
+  // continua (header + área de movimientos + CTA comparten fondo #F8FAFC) y cada
+  // movimiento es una CARD blanca apoyada sobre ella — la contención hace obvia
+  // la pertenencia (antes las filas de tabla parecían desvinculadas del header).
+  const expedienteTemplate = `
+          <tr><td style="background-color:#F8FAFC;border-top:1px solid #E6EAF2;padding:14px 18px 10px 18px;">
+            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
+            <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
+          </td></tr>{{movimientosRows}}{{folderCtaHtml}}`;
+
+  // Card blanca por movimiento, sobre la superficie gris de la causa.
   const movimientoRowTemplate = `
-              <tr>
-                <td class="causa-fecha" style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;white-space:nowrap;">{{fecha}}</td>
-                <td class="causa-tipo" style="padding:9px 14px;font-size:13px;color:#0F172A;font-weight:600;border-bottom:1px solid #EEF1F6;">{{tipo}}</td>
-                <td class="causa-detalle" style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;">{{detalle}}{{urlHtml}}</td>
-              </tr>`;
+          <tr><td style="background-color:#F8FAFC;padding:0 18px 10px 18px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;">
+              <tr><td style="padding:12px 14px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="font-size:13px;font-weight:600;color:#0F172A;">{{tipo}}</td>
+                  <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">{{fecha}}</td>
+                </tr></table>
+                <p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">{{detalle}}</p>{{urlHtml}}
+              </td></tr>
+            </table>
+          </td></tr>`;
+
+  // Footer de segmento: CTA a la causa, sobre la misma superficie gris.
+  const folderCtaTemplate = `
+          <tr><td style="background-color:#F8FAFC;padding:2px 18px 14px 18px;" align="right">
+            <a href="{{folderUrl}}" style="font-size:13px;font-weight:600;color:#3A7BFF;text-decoration:none;">Ver causa completa en Law Analytics&nbsp;&#8594;</a>
+          </td></tr>`;
 
   // Procesar cada expediente
   for (const [key, data] of Object.entries(movementsByExpediente)) {
@@ -141,15 +166,18 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
         try {
           const token = signMovementToken({ causaId: expediente.id, userId: movement.userId, url: portalUrl });
           docUrl = `${frontBaseUrl}/m/${token}?source=email_movimiento`;
+          if (!firstToken) firstToken = token;
         } catch (err) {
           logger.error(`No se pudo firmar el movement-link, usando URL del portal: ${err.message}`);
           docUrl = portalUrl;
         }
       }
 
-      // HTML row
+      // "Ver documento" como BOTÓN dentro de la card del movimiento (rediseño
+      // 2026-07: es la puerta al visor /m/:token y era un link de 12px; ahora es
+      // el elemento accionable más visible de la card).
       const urlHtml = docUrl
-        ? `<br><a href="${docUrl}" style="color:#3A7BFF; font-size:12px; text-decoration:none; font-weight:500;">Ver documento →</a>`
+        ? `<p style="margin:10px 0 0 0;"><a href="${docUrl}" style="display:inline-block;padding:8px 16px;font-size:12px;font-weight:600;color:#FFFFFF;background-color:#3A7BFF;border-radius:6px;text-decoration:none;">Ver documento&nbsp;&#8594;</a></p>`
         : '';
       
       movimientosRows += processTemplate(movimientoRowTemplate, {
@@ -172,6 +200,11 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
       ? `${expediente.number}/${expediente.year}`
       : `${expediente.number ?? ''}`.trim() || '(sin nº)';
 
+    // CTA por card a la causa en la app (si el caller resolvió el folder).
+    const folderId = folderIdByExpediente[key];
+    const folderUrl = folderId ? `${frontBaseUrl}/apps/folders/details/${folderId}` : null;
+    const folderCtaHtml = folderUrl ? processTemplate(folderCtaTemplate, { folderUrl }) : '';
+
     // Procesar template del expediente
     expedientesHtml += processTemplate(expedienteTemplate, {
       number: expediente.number,
@@ -179,31 +212,52 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
       numberYear,
       fuero: expediente.fuero,
       caratula: expediente.caratula,
-      movimientosRows
+      movimientosRows,
+      folderCtaHtml
     });
 
     // Versión texto
     expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}\n`;
     expedientesText += `Carátula: ${expediente.caratula}\n\n`;
     expedientesText += movimientosText;
+    if (folderUrl) {
+      expedientesText += `Ver causa completa: ${folderUrl}\n`;
+    }
   }
-  
+
+  // Envolver los segmentos en el contenedor de sección (banda de título arriba).
+  if (expedientesHtml) {
+    expedientesHtml = processTemplate(sectionWrapperTemplate, { sectionTitle, segments: expedientesHtml });
+  }
+
+  // Pixel de apertura: reusa el primer token firmado del email (atribuye
+  // user+causa). Sin visor público habilitado no hay token → sin pixel.
+  const trackingPixelHtml = firstToken
+    ? `<img src="${DEFAULT_SERVER_BASE_URL}/api/public/movimientos/${firstToken}/open.gif" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;" />`
+    : '';
+
   return {
     userName: user.name || user.email || 'Usuario',
     userEmail: user.email,
     expedientesCount: Object.keys(movementsByExpediente).length,
     expedientesHtml,
     expedientesText,
+    trackingPixelHtml,
     'process.env.BASE_URL': process.env.BASE_URL || ''
   };
 }
 
-// Header de sección dentro de la card blanca (eyebrow azul). Se usa para separar
-// "Notificaciones" de "Movimientos" cuando el email trae ambos.
+// Header de sección dentro de la card blanca: divisor + eyebrow azul. Ancla
+// visualmente las cards de expedientes al hero (antes flotaban sin conexión) y
+// separa "Notificaciones" de "Movimientos" cuando el email trae ambos.
 function sectionHeaderHtml(title) {
   return `
-      <tr><td class="px-card" style="padding:26px 44px 2px 44px;">
-        <p style="margin:0;font-size:12px;color:#3A7BFF;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">${title}</p>
+      <tr><td class="px-card" style="padding:24px 44px 0 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr><td style="border-top:1px solid #E6EAF2;padding-top:18px;">
+            <p style="margin:0;font-size:12px;color:#3A7BFF;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">${title}</p>
+          </td></tr>
+        </table>
       </td></tr>`;
 }
 
@@ -217,32 +271,38 @@ function sectionHeaderHtml(title) {
 function processJudicialCedulasData(cedulasByExpediente) {
   const moment = require('moment');
 
-  const expedienteTemplate = `
-      <tr><td class="px-card" style="padding:16px 44px 4px 44px;">
+  // Mismo patrón de contenedor único que los movimientos (v3): banda de sección
+  // + segmentos por expediente adentro.
+  const sectionWrapperTemplate = `
+      <tr><td class="px-card" style="padding:20px 44px 4px 44px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E6EAF2;border-radius:10px;overflow:hidden;">
-          <tr><td style="background-color:#F8FAFC;border-bottom:1px solid #E6EAF2;padding:14px 18px;">
-            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
-            <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
-          </td></tr>
-          <tr><td style="padding:0;">
-            <table class="mov-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <thead><tr style="background-color:#FFFFFF;">
-                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Fecha</th>
-                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Tipo</th>
-                <th style="padding:9px 14px;font-size:11px;color:#64748B;text-align:left;border-bottom:1px solid #E6EAF2;text-transform:uppercase;letter-spacing:0.05em;">Detalle</th>
-              </tr></thead>
-              <tbody>{{cedulasRows}}</tbody>
-            </table>
-          </td></tr>
+          <tr><td style="background-color:#EFF4FF;padding:11px 18px;">
+            <p style="margin:0;font-size:11px;color:#3A7BFF;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">Notificaciones recibidas</p>
+          </td></tr>{{segments}}
         </table>
       </td></tr>`;
 
+  // Mismo patrón v4 que los movimientos: superficie gris por expediente + card
+  // blanca por cédula.
+  const expedienteTemplate = `
+          <tr><td style="background-color:#F8FAFC;border-top:1px solid #E6EAF2;padding:14px 18px 10px 18px;">
+            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
+            <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
+          </td></tr>{{cedulasRows}}
+          <tr><td style="background-color:#F8FAFC;padding:0 18px 6px 18px;"></td></tr>`;
+
   const cedulaRowTemplate = `
-              <tr>
-                <td style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;white-space:nowrap;">{{fecha}}</td>
-                <td style="padding:9px 14px;font-size:13px;color:#0F172A;font-weight:600;border-bottom:1px solid #EEF1F6;">{{tipo}}</td>
-                <td style="padding:9px 14px;font-size:13px;color:#475569;border-bottom:1px solid #EEF1F6;">{{detalle}}</td>
-              </tr>`;
+          <tr><td style="background-color:#F8FAFC;padding:0 18px 10px 18px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;">
+              <tr><td style="padding:12px 14px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="font-size:13px;font-weight:600;color:#0F172A;">{{tipo}}</td>
+                  <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">{{fecha}}</td>
+                </tr></table>
+                <p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">{{detalle}}</p>
+              </td></tr>
+            </table>
+          </td></tr>`;
 
   let cedulasHtml = '';
   let cedulasText = '';
@@ -284,8 +344,8 @@ function processJudicialCedulasData(cedulasByExpediente) {
     cedulasText += `Carátula: ${expediente.caratula}\n\n`;
   }
 
-  // Prepend el header de sección.
-  cedulasHtml = sectionHeaderHtml('Notificaciones recibidas') + cedulasHtml;
+  // Envolver los segmentos en el contenedor de sección (banda de título arriba).
+  cedulasHtml = processTemplate(sectionWrapperTemplate, { segments: cedulasHtml });
   cedulasText = `NOTIFICACIONES RECIBIDAS\n${cedulasText}`;
 
   return { cedulasHtml, cedulasText, cedulasExpedienteKeys: keys };

@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const moment = require("moment");
 const logger = require("../config/logger");
 const { sendEmail } = require("./email");
-const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate } = require("../models");
+const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder } = require("../models");
 const JudicialNotificationConfig = require("../models/Judicial-notification-config");
 const { addNotificationAtomic } = require("./notificationHelper");
 const { getProcessedTemplate, processJudicialMovementsData, processJudicialCedulasData, sectionHeaderHtml } = require("./templateProcessor");
@@ -1231,6 +1231,24 @@ async function sendJudicialMovementNotifications({
             logger.warn(`No se pudo cargar JudicialNotificationConfig para movement links, usando portal: ${cfgErr.message}`);
         }
 
+        // Resolver el folder de cada expediente para los CTAs "Ver causa completa"
+        // (por card y global). Best-effort: sin folder no hay CTA por card.
+        const folderIdByExpediente = {};
+        try {
+            for (const [key, data] of Object.entries(movementsByExpediente)) {
+                const causaId = data.expediente?.id;
+                if (!causaId) continue;
+                const folder = await Folder.findOne({ causaId, userId: user._id }).select('_id').lean();
+                if (folder) folderIdByExpediente[key] = String(folder._id);
+            }
+        } catch (folderErr) {
+            logger.warn(`No se pudieron resolver folders para CTAs del email judicial: ${folderErr.message}`);
+        }
+        movementLinkOptions.folderIdByExpediente = folderIdByExpediente;
+        // Título de la banda de sección (contenedor v3): "Movimientos" cuando el
+        // email también trae cédulas, "Movimientos nuevos" cuando viene solo.
+        movementLinkOptions.sectionTitle = Object.keys(cedulasByExpediente).length > 0 ? 'Movimientos' : 'Movimientos nuevos';
+
         // Variables de movimientos (slot {{expedientesHtml}}) + cédulas (slot {{cedulasHtml}}).
         const movementVars = processJudicialMovementsData(movementsByExpediente, user, movementLinkOptions);
         const cedulaData = processJudicialCedulasData(cedulasByExpediente);
@@ -1257,9 +1275,19 @@ async function sendJudicialMovementNotifications({
             ledeText = `se registraron movimientos nuevos en ${totalExpedientesCount} expediente(s). Acá tenés el detalle.`;
         }
 
-        // Header "Movimientos" solo cuando el email trae ambas secciones (para separarlas).
-        const movimientosHeader = (hasMov && hasCed) ? sectionHeaderHtml('Movimientos') : '';
-        const movimientosHeaderText = (hasMov && hasCed) ? 'MOVIMIENTOS\n' : '';
+        // Header de sección: desde el rediseño v3 la banda de título vive DENTRO
+        // del contenedor de cada sección (expedientesHtml/cedulasHtml) — el slot
+        // {{movimientosHeader}} del template queda vacío.
+        const movimientosHeader = '';
+        const movimientosHeaderText = hasMov ? (hasCed ? 'MOVIMIENTOS\n' : 'MOVIMIENTOS NUEVOS\n') : '';
+
+        // CTA global: con UN solo expediente resuelto va directo a la causa
+        // (deep-link a la app); con varios (o sin folder) cae al listado.
+        const frontBase = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
+        const resolvedFolderIds = Object.values(folderIdByExpediente);
+        const singleFolderId = totalExpedientesCount === 1 && resolvedFolderIds.length === 1 ? resolvedFolderIds[0] : null;
+        const ctaUrl = singleFolderId ? `${frontBase}/apps/folders/details/${singleFolderId}` : `${frontBase}/apps/folders/list`;
+        const ctaLabel = singleFolderId ? 'Ver la causa completa' : 'Ver mis causas';
 
         const templateVariables = {
             ...movementVars,
@@ -1270,7 +1298,9 @@ async function sendJudicialMovementNotifications({
             ledeText,
             totalExpedientesCount,
             movimientosHeader,
-            movimientosHeaderText
+            movimientosHeaderText,
+            ctaUrl,
+            ctaLabel
         };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
         
