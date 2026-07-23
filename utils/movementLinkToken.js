@@ -35,15 +35,19 @@ function getSigningKey() {
 }
 
 // Firma un token para un movimiento. { causaId, userId, url } -> string JWT.
-function signMovementToken({ causaId, userId, url }) {
-  if (!causaId || !url) {
-    throw new Error('signMovementToken requiere causaId y url');
+// v2 (2026-07, multi-fuente — mantener en sync con law-analytics-server):
+// además de { causaId, userId, url } acepta { source, ref } para movimientos de
+// TEXTO sin PDF (scba/eje/mev). Claims: { c, u, url?, s?, m? }. Sin `s` = pjn.
+function signMovementToken({ causaId, userId, url, source, ref }) {
+  if (!causaId || (!url && !ref)) {
+    throw new Error('signMovementToken requiere causaId y url (pjn) o ref (fuentes de texto)');
   }
-  return jwt.sign(
-    { c: String(causaId), u: userId ? String(userId) : null, url: String(url) },
-    getSigningKey(),
-    { algorithm: 'HS256', expiresIn: TOKEN_TTL }
-  );
+  const payload = { c: String(causaId), u: userId ? String(userId) : null, url: url ? String(url) : null };
+  if (source && source !== 'pjn') {
+    payload.s = String(source);
+    if (ref) payload.m = String(ref);
+  }
+  return jwt.sign(payload, getSigningKey(), { algorithm: 'HS256', expiresIn: TOKEN_TTL });
 }
 
 module.exports = { signMovementToken };

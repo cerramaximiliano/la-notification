@@ -157,27 +157,45 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
     movements.forEach(movement => {
       const fecha = moment(movement.movimiento.fecha).format('DD/MM/YYYY');
       
-      // Link "Ver documento": cuando el visor público está habilitado, apunta a
-      // nuestra página /m/:token (PDF desde S3 + tracking + CTA a la app). Si el
-      // flag está OFF o falla la firma, cae a la URL original del portal.
+      // Link al visor público /m/:token (tracking + CTA a la app):
+      //   - PJN (con url): token v1, botón "Ver documento" (PDF desde S3).
+      //   - Fuentes de texto (scba/eje/mev con sourceRef): token v2, botón
+      //     "Ver movimiento" (vista de lectura del texto).
+      // Si el flag está OFF o falla la firma, cae a la URL original del portal.
       const portalUrl = movement.movimiento.url;
+      const movSource = movement.source && movement.source !== 'pjn' ? movement.source : null;
+      const sourceRef = movement.movimiento.sourceRef || null;
       let docUrl = portalUrl;
-      if (usePublicLinks && portalUrl && expediente.id) {
+      let docLabel = 'Ver documento';
+      if (usePublicLinks && expediente.id) {
         try {
-          const token = signMovementToken({ causaId: expediente.id, userId: movement.userId, url: portalUrl });
-          docUrl = `${frontBaseUrl}/m/${token}?source=email_movimiento`;
-          if (!firstToken) firstToken = token;
+          if (movSource && sourceRef) {
+            const token = signMovementToken({
+              causaId: expediente.id,
+              userId: movement.userId,
+              url: portalUrl || null,
+              source: movSource,
+              ref: sourceRef,
+            });
+            docUrl = `${frontBaseUrl}/m/${token}?source=email_movimiento`;
+            docLabel = 'Ver movimiento';
+            if (!firstToken) firstToken = token;
+          } else if (portalUrl) {
+            const token = signMovementToken({ causaId: expediente.id, userId: movement.userId, url: portalUrl });
+            docUrl = `${frontBaseUrl}/m/${token}?source=email_movimiento`;
+            if (!firstToken) firstToken = token;
+          }
         } catch (err) {
           logger.error(`No se pudo firmar el movement-link, usando URL del portal: ${err.message}`);
           docUrl = portalUrl;
         }
       }
 
-      // "Ver documento" como BOTÓN dentro de la card del movimiento (rediseño
-      // 2026-07: es la puerta al visor /m/:token y era un link de 12px; ahora es
-      // el elemento accionable más visible de la card).
+      // Botón dentro de la card del movimiento (rediseño 2026-07: es la puerta
+      // al visor /m/:token y era un link de 12px; ahora es el elemento
+      // accionable más visible de la card).
       const urlHtml = docUrl
-        ? `<p style="margin:10px 0 0 0;"><a href="${docUrl}" style="display:inline-block;padding:8px 16px;font-size:12px;font-weight:600;color:#FFFFFF;background-color:#3A7BFF;border-radius:6px;text-decoration:none;">Ver documento&nbsp;&#8594;</a></p>`
+        ? `<p style="margin:10px 0 0 0;"><a href="${docUrl}" style="display:inline-block;padding:8px 16px;font-size:12px;font-weight:600;color:#FFFFFF;background-color:#3A7BFF;border-radius:6px;text-decoration:none;">${docLabel}&nbsp;&#8594;</a></p>`
         : '';
       
       movimientosRows += processTemplate(movimientoRowTemplate, {

@@ -28,7 +28,19 @@ const judicialMovementSchema = new mongoose.Schema({
     fecha: { type: Date, required: true, index: true },
     tipo: { type: String, required: true },
     detalle: { type: String, required: true },
-    url: String
+    url: String,
+    // Referencia del movimiento dentro de su fuente (v2 multi-fuente):
+    // scba → sourceId del mirror scba-movements; eje → actId; mev → _id.
+    // Habilita el link /m/:token para movimientos de texto sin url.
+    sourceRef: String
+  },
+
+  // Fuente del movimiento: 'pjn' (default — coordinator PJN no lo setea),
+  // 'scba' | 'eje' | 'mev' (webhook de los workers).
+  source: {
+    type: String,
+    enum: ['pjn', 'scba', 'eje', 'mev'],
+    default: 'pjn'
   },
   
   // Estado de notificación

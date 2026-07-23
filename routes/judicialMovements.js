@@ -126,8 +126,12 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             fecha: new Date(movimiento.fecha),
             tipo: movimiento.tipo,
             detalle: movimiento.detalle,
-            url: movimiento.url
+            url: movimiento.url,
+            sourceRef: movimiento.sourceRef
           };
+          if (movement.source) {
+            existingMovement.source = movement.source;
+          }
 
           if (existingMovement.notificationStatus === 'sent') {
             // Ya notificado con éxito — mantener estado, solo persistir metadata.
@@ -161,8 +165,10 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               fecha: new Date(movimiento.fecha),
               tipo: movimiento.tipo,
               detalle: movimiento.detalle,
-              url: movimiento.url
+              url: movimiento.url,
+              sourceRef: movimiento.sourceRef
             },
+            source: movement.source || 'pjn',
             notificationSettings: {
               notifyAt,
               channels: ['email', 'browser']
