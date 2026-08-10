@@ -43,10 +43,13 @@ const judicialMovementSchema = new mongoose.Schema({
     default: 'pjn'
   },
   
-  // Estado de notificación
+  // Estado de notificación.
+  // 'skipped' = descartado por política central (source deshabilitado, filtro
+  // de contenido o folder archivado) — terminal, no se reintenta; el motivo
+  // queda en notifications[].
   notificationStatus: {
     type: String,
-    enum: ['pending', 'sent', 'failed'],
+    enum: ['pending', 'sent', 'failed', 'skipped'],
     default: 'pending'
   },
   

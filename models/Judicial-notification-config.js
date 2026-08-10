@@ -47,6 +47,13 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
                 },
                 message: 'Los días deben estar entre 0 (Domingo) y 6 (Sábado)'
             }
+        },
+        // Horas ('H:mm', hora Argentina) en que el cron judicial envía el
+        // reporte de monitoreo al ADMIN_EMAIL. Reemplaza a la env var
+        // JUDICIAL_MOVEMENT_REPORT_HOURS (que queda como fallback).
+        reportHours: {
+            type: [String],
+            default: ['15:00', '17:00', '19:30']
         }
     },
 
@@ -72,6 +79,14 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             default: 24,
             min: 1,
             max: 168 // Una semana
+        },
+        // Aplicar maxNotificationsPerUserPerDay y minHoursBetweenSameExpediente
+        // en la entrega (la-notification). Default false: estos límites
+        // existían declarados pero sin efecto — encenderlos es opt-in para no
+        // cambiar el comportamiento en producción de forma silenciosa.
+        enforcePerUserLimits: {
+            type: Boolean,
+            default: false
         }
     },
 
@@ -185,6 +200,13 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             min: 7,
             max: 180
         },
+        // Días para retener movimientos descartados por política ('skipped')
+        skippedRetentionDays: {
+            type: Number,
+            default: 30,
+            min: 7,
+            max: 180
+        },
         // Habilitar limpieza automática
         autoCleanupEnabled: {
             type: Boolean,
@@ -238,6 +260,18 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         maintenanceMessage: {
             type: String,
             default: 'El sistema de notificaciones está en mantenimiento'
+        },
+        // Habilita el coordinador interno de movimientos PJN (safety-net que
+        // escanea las colecciones de causas cada corrida del cron). Apagarlo
+        // deja solo el webhook como vía de entrada de movimientos.
+        coordinatorEnabled: {
+            type: Boolean,
+            default: true
+        },
+        // Habilita la coordinación de cédulas (bandeja PJN → JudicialCedula).
+        cedulasEnabled: {
+            type: Boolean,
+            default: true
         }
     },
 
@@ -263,6 +297,19 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
                 default: 0
             }
         }
+    },
+
+    // Políticas de notificación de movimientos por fuente (sparse).
+    // { version, defaults: {firstSyncPolicy, offDayMode, activeDays, filters,
+    //   enabled, notifyArchivedFolders, cacheSourceTodayOnly},
+    //   sources: { '<source>': {<overrides>} } }.
+    // Los workers resuelven por su clave propia ('pjn-app-update-worker', ...);
+    // este servicio resuelve en la ENTREGA por jurisdicción ('pjn'|'eje'|'mev'|'scba').
+    // Mixed SIN default a propósito: solo overridea comportamiento si fue
+    // seteado explícitamente (ver notificationPolicyService).
+    movementPolicies: {
+        type: mongoose.Schema.Types.Mixed,
+        default: undefined
     },
 
     // Metadata

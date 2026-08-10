@@ -1,9 +1,10 @@
 const mongoose = require("mongoose");
 const moment = require("moment");
+const momentTz = require("moment-timezone");
 const logger = require("../config/logger");
 const { sendEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder } = require("../models");
-const JudicialNotificationConfig = require("../models/Judicial-notification-config");
+const policyService = require("./notificationPolicyService");
 const { addNotificationAtomic } = require("./notificationHelper");
 const { getProcessedTemplate, processJudicialMovementsData, processJudicialCedulasData, sectionHeaderHtml } = require("./templateProcessor");
 
@@ -1153,7 +1154,7 @@ async function sendJudicialMovementNotifications({
 
         // Buscar movimientos judiciales pendientes de notificar
         const now = new Date();
-        const pendingMovements = await JudicialMovement.find({
+        let pendingMovements = await JudicialMovement.find({
             userId,
             notificationStatus: 'pending',
             'notificationSettings.notifyAt': { $lte: now }
@@ -1167,11 +1168,143 @@ async function sendJudicialMovementNotifications({
             'notificationSettings.notifyAt': { $lte: now }
         }).sort({ 'cedula.fecha': -1 });
 
+        // ============================================================
+        // ENFORCEMENT CENTRAL de judicial-notification-configs.
+        // Los workers aplican sus propios gates como optimización, pero la
+        // palabra final la tiene este servicio: así la config vale también
+        // para el coordinador interno y los envíos manuales (pjn-api).
+        // ============================================================
+        const notifConfig = await policyService.getConfigCached();
+
+        // Kill-switch global: dejar todo pending (es un switch temporal,
+        // al reactivar se entrega lo acumulado).
+        if (!policyService.isGloballyEnabled(notifConfig)) {
+            return {
+                success: true,
+                statusCode: 200,
+                message: 'Notificaciones deshabilitadas globalmente (status.enabled/mode)',
+                notified: false
+            };
+        }
+
+        // Mapa causaId → folder del usuario ({_id, archived}). Se usa para el
+        // filtro de folders archivados y después para los CTAs del email.
+        const folderByCausa = {};
+        let skippedCount = 0;
+        let deferredCount = 0;
+
+        if (pendingMovements.length > 0) {
+            const causaIds = [...new Set(pendingMovements.map(m => m.expediente?.id).filter(Boolean))];
+            for (const causaId of causaIds) {
+                try {
+                    const folder = await Folder.findOne({ causaId, userId }).select('_id archived').lean();
+                    if (folder) folderByCausa[causaId] = folder;
+                } catch (folderErr) {
+                    logger.warn(`No se pudo resolver folder para causa ${causaId}: ${folderErr.message}`);
+                }
+            }
+
+            const toSkip = [];
+            const kept = [];
+
+            for (const movement of pendingMovements) {
+                const source = movement.source || 'pjn';
+                const policy = policyService.resolvePolicy(notifConfig, source);
+
+                if (policy.enabled === false) {
+                    toSkip.push({ movement, reason: `Descartado por política: source '${source}' deshabilitado` });
+                    continue;
+                }
+                if (!policyService.passesContentFilters(movement.movimiento, notifConfig, policy)) {
+                    toSkip.push({ movement, reason: 'Descartado por filtros de contenido (tipo/keyword)' });
+                    continue;
+                }
+                // Día no activo: diferir (queda pending y se entrega el
+                // próximo día activo), salvo offDayMode 'send'.
+                if (!policyService.isActiveDay(notifConfig, policy) && policy.offDayMode !== 'send') {
+                    deferredCount++;
+                    continue;
+                }
+                // Folder archivado: descartar solo si la política lo pide.
+                // Sin folder resuelto no se puede determinar → se notifica.
+                const folder = movement.expediente?.id ? folderByCausa[movement.expediente.id] : null;
+                if (policy.notifyArchivedFolders === false && folder && folder.archived === true) {
+                    toSkip.push({ movement, reason: 'Descartado por política: folder archivado (notifyArchivedFolders=false)' });
+                    continue;
+                }
+                kept.push(movement);
+            }
+
+            // Límites por usuario — opt-in vía limits.enforcePerUserLimits
+            // (default false para no cambiar comportamiento existente).
+            let deliverable = kept;
+            const limits = (notifConfig && notifConfig.limits) || {};
+            if (limits.enforcePerUserLimits === true && deliverable.length > 0) {
+                const timezone = notifConfig?.notificationSchedule?.timezone || 'America/Argentina/Buenos_Aires';
+                const maxPerDay = limits.maxNotificationsPerUserPerDay || 50;
+                const startOfDay = momentTz.tz(timezone).startOf('day').toDate();
+                const sentToday = await JudicialMovement.countDocuments({
+                    userId,
+                    notificationStatus: 'sent',
+                    updatedAt: { $gte: startOfDay }
+                });
+                const allowance = Math.max(0, maxPerDay - sentToday);
+                if (deliverable.length > allowance) {
+                    deferredCount += deliverable.length - allowance;
+                    deliverable = deliverable.slice(0, allowance);
+                    logger.info(`Límite diario por usuario aplicado (${maxPerDay}/día, ${sentToday} ya enviados): ${deliverable.length} de ${kept.length} entran en este batch`);
+                }
+
+                const minHours = limits.minHoursBetweenSameExpediente;
+                if (minHours > 0 && deliverable.length > 0) {
+                    const cutoff = new Date(Date.now() - minHours * 3600 * 1000);
+                    const expIds = [...new Set(deliverable.map(m => m.expediente?.id).filter(Boolean))];
+                    const recentlyNotified = new Set();
+                    for (const expId of expIds) {
+                        const recent = await JudicialMovement.findOne({
+                            userId,
+                            'expediente.id': expId,
+                            notificationStatus: 'sent',
+                            updatedAt: { $gte: cutoff }
+                        }).select('_id').lean();
+                        if (recent) recentlyNotified.add(expId);
+                    }
+                    if (recentlyNotified.size > 0) {
+                        const before = deliverable.length;
+                        deliverable = deliverable.filter(m => !recentlyNotified.has(m.expediente?.id));
+                        deferredCount += before - deliverable.length;
+                        logger.info(`minHoursBetweenSameExpediente (${minHours}h): ${before - deliverable.length} movimientos diferidos de ${recentlyNotified.size} expediente(s) recién notificados`);
+                    }
+                }
+            }
+
+            // Persistir los descartados como 'skipped' (terminal, con motivo).
+            for (const { movement, reason } of toSkip) {
+                try {
+                    movement.notificationStatus = 'skipped';
+                    if (!Array.isArray(movement.notifications)) movement.notifications = [];
+                    movement.notifications.push({ date: new Date(), type: 'system', success: false, details: reason });
+                    await movement.save();
+                    skippedCount++;
+                } catch (skipErr) {
+                    logger.error(`Error marcando movimiento ${movement._id} como skipped: ${skipErr.message}`);
+                }
+            }
+
+            if (skippedCount > 0 || deferredCount > 0) {
+                logger.info(`Enforcement central para usuario ${userId}: ${skippedCount} descartados, ${deferredCount} diferidos, ${deliverable.length} a entregar`);
+            }
+
+            pendingMovements = deliverable;
+        }
+
         if (pendingMovements.length === 0 && pendingCedulas.length === 0) {
             return {
                 success: true,
                 statusCode: 200,
-                message: 'No hay movimientos ni notificaciones judiciales pendientes',
+                message: skippedCount > 0 || deferredCount > 0
+                    ? `Sin novedades a entregar (${skippedCount} descartados por política, ${deferredCount} diferidos)`
+                    : 'No hay movimientos ni notificaciones judiciales pendientes',
                 notified: false
             };
         }
@@ -1218,31 +1351,21 @@ async function sendJudicialMovementNotifications({
             });
         }
 
-        // Flag del visor público (/m/:token) desde el config doc. Se lee por
-        // batch de envío → toggleable en runtime (Mongo) sin restart. Si falla
-        // la carga, default seguro: links al portal (usePublicMovementLinks=false).
-        let movementLinkOptions = {};
-        try {
-            const notifConfig = await JudicialNotificationConfig.getConfig();
-            movementLinkOptions = {
-                usePublicMovementLinks: notifConfig?.contentConfig?.usePublicMovementLinks === true,
-            };
-        } catch (cfgErr) {
-            logger.warn(`No se pudo cargar JudicialNotificationConfig para movement links, usando portal: ${cfgErr.message}`);
-        }
+        // Flag del visor público (/m/:token) desde el config doc ya cargado
+        // (cache 60 s del policyService → toggleable en runtime sin restart).
+        // Default seguro: links al portal (usePublicMovementLinks=false).
+        let movementLinkOptions = {
+            usePublicMovementLinks: notifConfig?.contentConfig?.usePublicMovementLinks === true,
+        };
 
-        // Resolver el folder de cada expediente para los CTAs "Ver causa completa"
-        // (por card y global). Best-effort: sin folder no hay CTA por card.
+        // Folders para los CTAs "Ver causa completa" (por card y global),
+        // reutilizando el mapa resuelto durante el enforcement central.
         const folderIdByExpediente = {};
-        try {
-            for (const [key, data] of Object.entries(movementsByExpediente)) {
-                const causaId = data.expediente?.id;
-                if (!causaId) continue;
-                const folder = await Folder.findOne({ causaId, userId: user._id }).select('_id').lean();
-                if (folder) folderIdByExpediente[key] = String(folder._id);
-            }
-        } catch (folderErr) {
-            logger.warn(`No se pudieron resolver folders para CTAs del email judicial: ${folderErr.message}`);
+        for (const [key, data] of Object.entries(movementsByExpediente)) {
+            const causaId = data.expediente?.id;
+            if (!causaId) continue;
+            const folder = folderByCausa[causaId];
+            if (folder) folderIdByExpediente[key] = String(folder._id);
         }
         movementLinkOptions.folderIdByExpediente = folderIdByExpediente;
         // Título de la banda de sección (contenedor v3): "Movimientos" cuando el

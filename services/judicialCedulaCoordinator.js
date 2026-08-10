@@ -13,6 +13,7 @@
 const mongoose = require('mongoose');
 const logger = require('../config/logger');
 const { calculateNotifyAt } = require('./judicialMovementCoordinator');
+const policyService = require('./notificationPolicyService');
 
 const SOURCE_COLLECTION = 'pjn-notifications';
 const BATCH_LIMIT = 500;
@@ -53,10 +54,26 @@ async function coordinateJudicialCedulas(options = {}) {
     cedulasExistentes: 0,
     omitidasNoHoy: 0,
     sinUsuario: 0,
-    errores: 0
+    errores: 0,
+    skippedByConfig: null
   };
 
   try {
+    // Gates centrales: kill-switch global + toggle específico de cédulas.
+    // No se aplican activeDays: la cédula es una notificación electrónica al
+    // domicilio del usuario, con relevancia legal — no se descarta por calendario.
+    const config = await policyService.getConfigCached();
+    if (!policyService.isGloballyEnabled(config)) {
+      stats.skippedByConfig = 'notificaciones deshabilitadas globalmente (status.enabled/mode)';
+      logger.info(`[CoordinatorCedulas] Omitido: ${stats.skippedByConfig}`);
+      return stats;
+    }
+    if (config && config.status && config.status.cedulasEnabled === false) {
+      stats.skippedByConfig = 'cédulas deshabilitadas (status.cedulasEnabled)';
+      logger.info(`[CoordinatorCedulas] Omitido: ${stats.skippedByConfig}`);
+      return stats;
+    }
+
     const db = mongoose.connection.db;
     const sourceColl = db.collection(SOURCE_COLLECTION);
 
@@ -71,7 +88,7 @@ async function coordinateJudicialCedulas(options = {}) {
     }
 
     logger.info(`[CoordinatorCedulas] ${pendientes.length} notificaciones sin coordinar`);
-    const notifyAt = calculateNotifyAt();
+    const notifyAt = config ? policyService.getScheduledNotifyAt(config, 19) : calculateNotifyAt();
 
     for (const doc of pendientes) {
       try {

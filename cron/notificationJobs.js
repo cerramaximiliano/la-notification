@@ -933,9 +933,13 @@ async function judicialMovementNotificationJob() {
   }
 
   // PASO 3: REPORTE DE MONITOREO
-  // Enviar informe al administrador solo a las 15:00, 17:00 y 19:30 (Argentina)
-  // o cuando hay errores (para alertar inmediatamente)
-  const reportHours = (process.env.JUDICIAL_MOVEMENT_REPORT_HOURS || '15:00,17:00,19:30').split(',').map(h => h.trim());
+  // Enviar informe al administrador en las horas configuradas (default 15:00,
+  // 17:00 y 19:30 Argentina) o cuando hay errores (para alertar inmediatamente).
+  // Las horas salen de notificationSchedule.reportHours (editable en la admin
+  // UI) con fallback a la env JUDICIAL_MOVEMENT_REPORT_HOURS.
+  const policyService = require('../services/notificationPolicyService');
+  const reportConfig = await policyService.getConfigCached();
+  const reportHours = policyService.getReportHours(reportConfig);
   const nowArg = moment().tz('America/Argentina/Buenos_Aires');
   const currentTime = nowArg.format('H:mm'); // Formato "15:00", "17:00", "19:30"
   const currentHourMinute = `${nowArg.hour()}:${String(nowArg.minute()).padStart(2, '0')}`;
@@ -966,11 +970,41 @@ async function judicialMovementNotificationJob() {
       const templateVariables = processJudicialMovementReportData(summary);
       const processedTemplate = await getProcessedTemplate('administration', 'judicial-movement-report', templateVariables);
 
+      // Distribución por fuente de lo enviado hoy (para el gráfico de torta
+      // del reporte). Best-effort: si la agregación falla, el reporte sale igual.
+      let sourceDistribution = null;
+      try {
+        const momentTzReport = require('moment-timezone');
+        const startOfDayArg = momentTzReport.tz('America/Argentina/Buenos_Aires').startOf('day').toDate();
+        const movimientosPorSource = await JudicialMovement.aggregate([
+          { $match: { notificationStatus: 'sent', updatedAt: { $gte: startOfDayArg } } },
+          { $group: { _id: '$source', count: { $sum: 1 } } }
+        ]);
+        const cedulasEnviadas = await JudicialCedula.countDocuments({
+          notificationStatus: 'sent',
+          updatedAt: { $gte: startOfDayArg }
+        });
+        sourceDistribution = { movimientos: movimientosPorSource, cedulas: cedulasEnviadas };
+      } catch (distError) {
+        logger.warn(`[REPORTE] No se pudo calcular la distribución por fuente: ${distError.message}`);
+      }
+
+      // Anexar al reporte: distribución por fuente (torta) + configuración
+      // vigente (informativo) — cada reporte documenta con qué config corrió.
+      const { buildConfigSummarySection, buildSourceDistributionSection } = require('../services/adminReportProcessor');
+      const distSection = buildSourceDistributionSection(sourceDistribution);
+      const configSection = buildConfigSummarySection(reportConfig);
+      const appendedHtml = distSection.html + configSection.html;
+      const htmlWithConfig = processedTemplate.html.includes('</body>')
+        ? processedTemplate.html.replace(/<\/body>/i, `${appendedHtml}</body>`)
+        : processedTemplate.html + appendedHtml;
+      const textWithConfig = (processedTemplate.text || '') + distSection.text + configSection.text;
+
       await sendEmail(
         adminEmail,
         processedTemplate.subject,
-        processedTemplate.html,
-        processedTemplate.text
+        htmlWithConfig,
+        textWithConfig
       );
 
       const reason = hasErrors ? '(errores detectados)' : `(hora programada: ${currentHourMinute})`;

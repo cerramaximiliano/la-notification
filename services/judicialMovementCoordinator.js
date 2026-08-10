@@ -8,10 +8,11 @@
 const mongoose = require('mongoose');
 const moment = require('moment-timezone');
 const logger = require('../config/logger');
+const policyService = require('./notificationPolicyService');
 
 // Configuración
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
-const DEFAULT_NOTIFICATION_HOUR = 19; // 19:00 horas
+const DEFAULT_NOTIFICATION_HOUR = 19; // Fallback si no hay config en Mongo
 
 /**
  * Mapeo de nombres de colección para cada tipo de causa
@@ -85,10 +86,13 @@ function filterMovementsByDate(causa, targetDate) {
 }
 
 /**
- * Obtiene los usuarios vinculados a una causa a través de los Folders
+ * Obtiene los usuarios vinculados a una causa a través de los Folders.
+ * Con includeArchived=false (política notifyArchivedFolders desactivada)
+ * solo cuentan los folders NO archivados.
  */
-async function getUsersForCausa(Folder, causaId) {
-  const folders = await Folder.find({ causaId }).select('userId').lean();
+async function getUsersForCausa(Folder, causaId, includeArchived = true) {
+  const query = includeArchived ? { causaId } : { causaId, archived: { $ne: true } };
+  const folders = await Folder.find(query).select('userId').lean();
   const userIds = [...new Set(folders.map(f => f.userId?.toString()).filter(Boolean))];
   return userIds;
 }
@@ -130,13 +134,35 @@ async function coordinateJudicialMovements(options = {}) {
   const stats = {
     causasEncontradas: 0,
     movimientosDelDia: 0,
+    movimientosFiltrados: 0,
     usuariosVinculados: 0,
     notificacionesExistentes: 0,
     notificacionesCreadas: 0,
-    errores: 0
+    errores: 0,
+    skippedByConfig: null
   };
 
   try {
+    // Gates centrales desde judicial-notification-configs (editable en caliente)
+    const config = await policyService.getConfigCached();
+    const policy = policyService.resolvePolicy(config, 'pjn');
+
+    if (!policyService.isGloballyEnabled(config)) {
+      stats.skippedByConfig = 'notificaciones deshabilitadas globalmente (status.enabled/mode)';
+      logger.info(`[Coordinator] Omitido: ${stats.skippedByConfig}`);
+      return stats;
+    }
+    if (config && config.status && config.status.coordinatorEnabled === false) {
+      stats.skippedByConfig = 'coordinador deshabilitado (status.coordinatorEnabled)';
+      logger.info(`[Coordinator] Omitido: ${stats.skippedByConfig}`);
+      return stats;
+    }
+    if (!policyService.isActiveDay(config, policy) && policy.offDayMode !== 'send') {
+      stats.skippedByConfig = 'día no activo (notificationSchedule.activeDays)';
+      logger.info(`[Coordinator] Omitido: ${stats.skippedByConfig}`);
+      return stats;
+    }
+
     // Buscar causas con movimientos del día
     const causas = await findCausasWithMovements(targetDate);
     stats.causasEncontradas = causas.length;
@@ -148,13 +174,25 @@ async function coordinateJudicialMovements(options = {}) {
 
     logger.info(`[Coordinator] Encontradas ${causas.length} causas con movimientos`);
 
-    // Calcular hora de notificación (19:00 Argentina o ahora si ya pasó)
-    const notifyAt = calculateNotifyAt();
+    // Hora de notificación desde la config (dailyNotificationHour, timezone)
+    // con fallback al comportamiento histórico (19:00 ART). Si ya pasó, ahora.
+    const notifyAt = config
+      ? policyService.getScheduledNotifyAt(config, DEFAULT_NOTIFICATION_HOUR)
+      : calculateNotifyAt();
 
     // Procesar cada causa
     for (const causa of causas) {
       // Filtrar movimientos del día
-      const movimientosDelDia = filterMovementsByDate(causa, targetDate);
+      let movimientosDelDia = filterMovementsByDate(causa, targetDate);
+
+      if (movimientosDelDia.length === 0) {
+        continue;
+      }
+
+      // Filtros de contenido centrales (tipos incluidos/excluidos, keywords)
+      const antesDeFiltros = movimientosDelDia.length;
+      movimientosDelDia = movimientosDelDia.filter(mov => policyService.passesContentFilters(mov, config, policy));
+      stats.movimientosFiltrados += antesDeFiltros - movimientosDelDia.length;
 
       if (movimientosDelDia.length === 0) {
         continue;
@@ -162,8 +200,9 @@ async function coordinateJudicialMovements(options = {}) {
 
       stats.movimientosDelDia += movimientosDelDia.length;
 
-      // Obtener usuarios vinculados
-      const userIds = await getUsersForCausa(Folder, causa._id);
+      // Obtener usuarios vinculados (excluyendo folders archivados si la
+      // política notifyArchivedFolders está desactivada)
+      const userIds = await getUsersForCausa(Folder, causa._id, policy.notifyArchivedFolders !== false);
 
       if (userIds.length === 0) {
         continue;

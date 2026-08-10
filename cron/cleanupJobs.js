@@ -27,6 +27,7 @@ async function getRetentionConfig() {
         notificationLogs: dbConfig.dataRetention.notificationLogRetentionDays || parseInt(process.env.NOTIFICATION_LOG_RETENTION_DAYS || '30'),
         alerts: dbConfig.dataRetention.alertRetentionDays || parseInt(process.env.ALERT_LOG_RETENTION_DAYS || '30'),
         judicialMovements: dbConfig.dataRetention.judicialMovementRetentionDays || parseInt(process.env.JUDICIAL_MOVEMENT_RETENTION_DAYS || '60'),
+        skippedMovements: dbConfig.dataRetention.skippedRetentionDays || 30,
         fileSystemLogs: parseInt(process.env.FILE_LOG_RETENTION_DAYS || '7'),
         pm2Logs: parseInt(process.env.PM2_LOG_RETENTION_DAYS || '7'),
         autoCleanupEnabled: dbConfig.dataRetention.autoCleanupEnabled !== false
@@ -41,6 +42,7 @@ async function getRetentionConfig() {
     notificationLogs: parseInt(process.env.NOTIFICATION_LOG_RETENTION_DAYS || '30'),
     alerts: parseInt(process.env.ALERT_LOG_RETENTION_DAYS || '30'),
     judicialMovements: parseInt(process.env.JUDICIAL_MOVEMENT_RETENTION_DAYS || '60'),
+    skippedMovements: 30,
     fileSystemLogs: parseInt(process.env.FILE_LOG_RETENTION_DAYS || '7'),
     pm2Logs: parseInt(process.env.PM2_LOG_RETENTION_DAYS || '7'),
     autoCleanupEnabled: true
@@ -93,6 +95,15 @@ async function cleanMongoDBLogs() {
     });
     results.judicialMovements = judicialResult.deletedCount;
     logger.info(`Eliminados ${results.judicialMovements} movimientos judiciales procesados (más de ${retentionConfig.judicialMovements} días)`);
+
+    // Limpiar movimientos descartados por política ('skipped')
+    const skippedCutoff = moment().subtract(retentionConfig.skippedMovements, 'days').toDate();
+    const skippedResult = await JudicialMovement.deleteMany({
+      notificationStatus: 'skipped',
+      updatedAt: { $lt: skippedCutoff }
+    });
+    results.skippedMovements = skippedResult.deletedCount;
+    logger.info(`Eliminados ${results.skippedMovements} movimientos descartados por política (más de ${retentionConfig.skippedMovements} días)`);
 
   } catch (error) {
     logger.error(`Error limpiando logs de MongoDB: ${error.message}`);
