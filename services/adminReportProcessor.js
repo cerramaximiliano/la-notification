@@ -272,9 +272,13 @@ function buildSourceDistributionSection(data) {
 }
 
 /**
- * Sección informativa "Configuración vigente" para el reporte del admin.
- * Se inyecta al final del email de judicial-movement-report para que cada
- * reporte documente con qué configuración corrió el sistema.
+ * Sección "Configuración vigente" para el reporte del admin.
+ *
+ * Muestra el comportamiento EFECTIVO (misma cascada de resolución que la
+ * entrega y los workers: sources[clave] → defaults → fallback → base), no
+ * las capas crudas del documento — así "activeDays Lun–Vie + offDayMode
+ * skip en defaults" con overrides 'send' por jurisdicción se lee como lo
+ * que realmente es: los fines de semana SÍ se entrega.
  *
  * @param {Object|null} config - doc de judicial-notification-configs (o null)
  * @returns {{html: string, text: string}}
@@ -288,9 +292,9 @@ function buildConfigSummarySection(config) {
   }
 
   const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-  const fmtDays = (days) => (Array.isArray(days) && days.length > 0 ? days.map(d => dayNames[d] ?? d).join(', ') : '—');
+  const fmtDays = (days) => (Array.isArray(days) && days.length > 0 ? days.map(d => dayNames[d] ?? d).join(', ') : 'Lun–Vie');
   const fmtList = (arr) => (Array.isArray(arr) && arr.length > 0 ? arr.join(', ') : 'ninguno');
-  const onOff = (v, def = true) => ((v === undefined ? def : v !== false) ? 'Sí' : 'No');
+  const isOn = (v, def = true) => (v === undefined ? def : v !== false);
 
   const status = config.status || {};
   const sched = config.notificationSchedule || {};
@@ -298,62 +302,143 @@ function buildConfigSummarySection(config) {
   const filters = config.filters || {};
   const retention = config.dataRetention || {};
   const mp = config.movementPolicies || {};
-  const defaults = mp.defaults || {};
 
-  const rows = [
-    ['Notificaciones habilitadas', `${onOff(status.enabled)} (modo: ${status.mode || 'production'})`],
-    ['Coordinador interno PJN', onOff(status.coordinatorEnabled)],
-    ['Cédulas (bandeja PJN)', onOff(status.cedulasEnabled)],
-    ['Hora de entrega', `${sched.dailyNotificationHour ?? 19}:${String(sched.dailyNotificationMinute ?? 0).padStart(2, '0')} (${sched.timezone || 'America/Argentina/Buenos_Aires'})`],
-    ['Días activos', fmtDays(sched.activeDays)],
-    ['Horas de reporte', fmtList(sched.reportHours)],
-    ['Máx. movimientos por batch', String(limits.maxMovementsPerBatch ?? 100)],
-    ['Límites por usuario (entrega)', limits.enforcePerUserLimits === true
-      ? `Activos — máx ${limits.maxNotificationsPerUserPerDay ?? 50}/día, ${limits.minHoursBetweenSameExpediente ?? 24} h entre mismo expediente`
-      : 'Desactivados (declarativos)'],
-    ['Tipos excluidos', fmtList(filters.excludedMovementTypes)],
-    ['Keywords excluidas', fmtList(filters.excludedKeywords)],
-    ['Tipos incluidos (whitelist)', fmtList(filters.includedMovementTypes)],
-    ['Política default', `1ª sync: ${defaults.firstSyncPolicy || '(fallback worker)'} · día no activo: ${defaults.offDayMode || 'skip'} · archivados: ${onOff(defaults.notifyArchivedFolders)} · habilitada: ${onOff(defaults.enabled)}`],
-    ['Retención', `sent ${retention.judicialMovementRetentionDays ?? 60} d · skipped ${retention.skippedRetentionDays ?? 30} d · logs ${retention.notificationLogRetentionDays ?? 30} d`]
+  // ---- Resolución efectiva (cascada idéntica a workers/entrega) ----
+  const BASE = { enabled: true, firstSyncPolicy: 'silent-baseline', offDayMode: 'skip', notifyArchivedFolders: true };
+  const resolve = (key, fallback = {}) => {
+    const layers = [(mp.sources || {})[key] || {}, mp.defaults || {}, fallback, BASE];
+    const pick = (f) => { for (const l of layers) { if (l[f] !== undefined && l[f] !== null) return l[f]; } return undefined; };
+    return {
+      enabled: pick('enabled'),
+      firstSyncPolicy: pick('firstSyncPolicy'),
+      offDayMode: pick('offDayMode'),
+      notifyArchivedFolders: pick('notifyArchivedFolders'),
+      cacheSourceTodayOnly: pick('cacheSourceTodayOnly')
+    };
+  };
+
+  const WORKERS = [
+    ['pjn-app-update-worker', 'PJN — app-update', { firstSyncPolicy: 'today-only', cacheSourceTodayOnly: true }],
+    ['pjn-mis-causas-update-worker', 'PJN — Mis Causas', { firstSyncPolicy: 'silent-baseline' }],
+    ['mev-update-worker', 'MEV — update', { firstSyncPolicy: 'silent-baseline' }],
+    ['scba-update-worker', 'SCBA — update (+archived)', { firstSyncPolicy: 'today-only', notifyArchivedFolders: true }],
+    ['eje-update-worker', 'EJE — update', { firstSyncPolicy: 'silent-baseline' }],
+    ['eje-stuck-worker', 'EJE — stuck (first-touch)', { firstSyncPolicy: 'silent-baseline' }]
   ];
+  const DELIVERY = [['pjn', 'PJN'], ['eje', 'EJE'], ['mev', 'MEV'], ['scba', 'SCBA']];
 
-  const sourceEntries = Object.entries(mp.sources || {});
-  const sourceLines = sourceEntries.map(([key, pol]) => {
-    const parts = [];
-    if (pol.enabled !== undefined) parts.push(`habilitada: ${pol.enabled ? 'Sí' : 'No'}`);
-    if (pol.firstSyncPolicy) parts.push(`1ª sync: ${pol.firstSyncPolicy}`);
-    if (pol.offDayMode) parts.push(`día no activo: ${pol.offDayMode}`);
-    if (pol.notifyArchivedFolders !== undefined) parts.push(`archivados: ${pol.notifyArchivedFolders ? 'Sí' : 'No'}`);
-    if (pol.cacheSourceTodayOnly !== undefined) parts.push(`cache solo hoy: ${pol.cacheSourceTodayOnly ? 'Sí' : 'No'}`);
-    if (pol.activeDays) parts.push(`días: ${fmtDays(pol.activeDays)}`);
-    if (pol.filters) parts.push('filtros propios');
-    return [key, parts.length > 0 ? parts.join(' · ') : 'hereda defaults'];
-  });
+  const deliveryResolved = DELIVERY.map(([key, label]) => ({ key, label, ...resolve(key) }));
+  const allWeekendSend = deliveryResolved.every(d => d.offDayMode === 'send');
+  const weekendSendList = deliveryResolved.filter(d => d.offDayMode === 'send').map(d => d.label);
+  const weekendLine = allWeekendSend
+    ? 'Se entrega TODOS los días, incluidos fines de semana (todas las jurisdicciones)'
+    : weekendSendList.length > 0
+      ? `Fines de semana solo: ${weekendSendList.join(', ')} — el resto se difiere/descarta`
+      : 'Solo días activos — fines de semana no se entrega';
 
-  const trStyle = 'border-bottom:1px solid #e5e7eb;';
-  const tdLabel = 'padding:4px 10px 4px 0;font-size:12px;color:#6b7280;white-space:nowrap;vertical-align:top;';
-  const tdValue = 'padding:4px 0;font-size:12px;color:#111827;';
+  const OFF_DAY_LABEL = { send: 'entrega igual', skip: 'no envía', defer: 'difiere' };
+  const FIRST_SYNC_LABEL = { 'silent-baseline': 'silenciosa', 'today-only': 'solo hoy', 'notify-all': 'todo ⚠️' };
 
-  const rowsHtml = rows.map(([label, value]) =>
-    `<tr style="${trStyle}"><td style="${tdLabel}">${label}</td><td style="${tdValue}">${value}</td></tr>`
+  // ---- Helpers visuales (email-safe: tablas + estilos inline) ----
+  const pill = (text, kind) => {
+    const K = {
+      green: ['#ECFDF5', '#059669'], amber: ['#FFFBEB', '#B45309'],
+      gray: ['#F3F4F6', '#4B5563'], blue: ['#EFF6FF', '#1D4ED8'], red: ['#FEF2F2', '#DC2626']
+    }[kind] || ['#F3F4F6', '#4B5563'];
+    return `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;background-color:${K[0]};color:${K[1]};">${text}</span>`;
+  };
+  const onOffPill = (on, lOn = 'Habilitado', lOff = 'Deshabilitado') => pill(on ? lOn : lOff, on ? 'green' : 'red');
+  const row = (label, valueHtml) =>
+    `<tr><td style="padding:4px 10px 4px 0;font-size:12px;color:#6b7280;white-space:nowrap;vertical-align:top;">${label}</td>` +
+    `<td style="padding:4px 0;font-size:12px;color:#111827;">${valueHtml}</td></tr>`;
+  const card = (title, rowsHtml) =>
+    `<div style="border:1px solid #e5e7eb;border-radius:8px;background-color:#ffffff;padding:12px 14px;margin-bottom:10px;">` +
+    `<div style="font-size:12px;font-weight:700;color:#111827;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.4px;">${title}</div>` +
+    `<table style="border-collapse:collapse;width:100%;">${rowsHtml}</table></div>`;
+
+  const globallyOn = isOn(status.enabled) && status.mode !== 'maintenance';
+
+  const estadoCard = card('Estado',
+    row('Sistema', `${onOffPill(globallyOn, 'Activo', status.mode === 'maintenance' ? 'Mantenimiento' : 'Deshabilitado')} <span style="color:#6b7280;">modo ${status.mode || 'production'}</span>`) +
+    row('Coordinador interno PJN', onOffPill(isOn(status.coordinatorEnabled))) +
+    row('Cédulas (bandeja PJN)', onOffPill(isOn(status.cedulasEnabled), 'Habilitadas', 'Deshabilitadas'))
+  );
+
+  const entregaCard = card('Entrega',
+    row('Hora de entrega', `<b>${sched.dailyNotificationHour ?? 19}:${String(sched.dailyNotificationMinute ?? 0).padStart(2, '0')}</b> ART`) +
+    row('Días activos', fmtDays(sched.activeDays)) +
+    row('Fin de semana', allWeekendSend ? pill('✓ ' + weekendLine, 'green') : pill(weekendLine, 'amber')) +
+    row('Límites por usuario', limits.enforcePerUserLimits === true
+      ? `${pill('Activos', 'green')} máx ${limits.maxNotificationsPerUserPerDay ?? 50}/día · ${limits.minHoursBetweenSameExpediente ?? 24} h entre mismo expediente`
+      : pill('Desactivados', 'gray')) +
+    row('Batch máx.', String(limits.maxMovementsPerBatch ?? 100)) +
+    row('Reportes admin', fmtList(sched.reportHours))
+  );
+
+  const filtrosCard = card('Filtros de contenido',
+    row('Tipos excluidos', (filters.excludedMovementTypes || []).length ? filters.excludedMovementTypes.map(t => pill(t, 'amber')).join(' ') : pill('ninguno', 'gray')) +
+    row('Keywords excluidas', (filters.excludedKeywords || []).length ? filters.excludedKeywords.map(t => pill(t, 'amber')).join(' ') : pill('ninguna', 'gray')) +
+    row('Whitelist de tipos', (filters.includedMovementTypes || []).length ? filters.includedMovementTypes.map(t => pill(t, 'blue')).join(' ') : pill('sin whitelist (pasa todo)', 'gray'))
+  );
+
+  const retencionCard = card('Retención',
+    row('Notificados (sent)', `${retention.judicialMovementRetentionDays ?? 60} días`) +
+    row("Descartados ('skipped')", `${retention.skippedRetentionDays ?? 30} días`) +
+    row('Logs', `${retention.notificationLogRetentionDays ?? 30} días`)
+  );
+
+  // ---- Tabla de políticas EFECTIVAS por fuente ----
+  const th = (t) => `<th style="padding:6px 10px 6px 0;font-size:11px;color:#6b7280;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">${t}</th>`;
+  const td = (t) => `<td style="padding:5px 10px 5px 0;font-size:12px;color:#111827;border-bottom:1px solid #f3f4f6;">${t}</td>`;
+
+  const workerRows = WORKERS.map(([key, label, fb]) => {
+    const r = resolve(key, fb);
+    const extras = [];
+    if (r.cacheSourceTodayOnly !== undefined && key === 'pjn-app-update-worker') extras.push(`cache: ${r.cacheSourceTodayOnly ? 'solo hoy' : 'sin filtro'}`);
+    return `<tr>${td(`<b>${label}</b>`)}${td(r.enabled === false ? pill('OFF (kill-switch)', 'red') : pill('activa', 'green'))}` +
+      `${td(FIRST_SYNC_LABEL[r.firstSyncPolicy] || r.firstSyncPolicy)}${td(OFF_DAY_LABEL[r.offDayMode] || r.offDayMode)}` +
+      `${td(r.notifyArchivedFolders === false ? pill('filtra', 'green') : 'notifica')}${td(extras.join(' · ') || '—')}</tr>`;
+  }).join('');
+
+  const deliveryRows = deliveryResolved.map((r) =>
+    `<tr>${td(`Entrega — <b>${r.label}</b>`)}${td(r.enabled === false ? pill('OFF (kill-switch)', 'red') : pill('activa', 'green'))}` +
+    `${td('—')}${td(OFF_DAY_LABEL[r.offDayMode] || r.offDayMode)}` +
+    `${td(r.notifyArchivedFolders === false ? pill('filtra', 'green') : 'notifica')}${td('barrera final')}</tr>`
   ).join('');
-  const sourcesHtml = sourceLines.map(([key, desc]) =>
-    `<tr style="${trStyle}"><td style="${tdLabel}"><code style="font-size:11px;">${key}</code></td><td style="${tdValue}">${desc}</td></tr>`
-  ).join('');
+
+  const policiesTable =
+    `<div style="border:1px solid #e5e7eb;border-radius:8px;background-color:#ffffff;padding:12px 14px;">` +
+    `<div style="font-size:12px;font-weight:700;color:#111827;margin-bottom:2px;text-transform:uppercase;letter-spacing:0.4px;">Políticas efectivas por fuente</div>` +
+    `<div style="font-size:11px;color:#9ca3af;margin-bottom:8px;">Valores ya resueltos (override → defaults → código). "Día no activo: no envía" en un worker significa que ese día no postea — la fila "Entrega" de su jurisdicción define si lo pendiente/coordinado se entrega igual.</div>` +
+    `<table style="border-collapse:collapse;width:100%;"><tr>${th('Fuente')}${th('Estado')}${th('1ª sync')}${th('Día no activo')}${th('Archivados')}${th('Extras')}</tr>` +
+    workerRows + deliveryRows + `</table></div>`;
 
   const html = `
-  <div style="margin-top:24px;padding:16px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
-    <h3 style="margin:0 0 4px 0;font-size:14px;color:#111827;">Configuración vigente</h3>
-    <p style="margin:0 0 10px 0;font-size:11px;color:#9ca3af;">Valores del documento judicial-notification-configs al momento de este reporte. Editable en dashboard.lawanalytics.app → Notificaciones → Movimientos Judiciales → Configuración.</p>
-    <table style="border-collapse:collapse;width:100%;">${rowsHtml}</table>
-    ${sourceLines.length > 0 ? `<h4 style="margin:12px 0 4px 0;font-size:12px;color:#111827;">Overrides por source</h4><table style="border-collapse:collapse;width:100%;">${sourcesHtml}</table>` : ''}
+  <div style="margin-top:24px;padding:16px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <h3 style="margin:0 0 2px 0;font-size:14px;color:#111827;">Configuración vigente</h3>
+    <p style="margin:0 0 12px 0;font-size:11px;color:#9ca3af;">Comportamiento efectivo al momento del reporte. Editable en dashboard.lawanalytics.app → Notificaciones → Movimientos Judiciales → Configuración.</p>
+    <table style="border-collapse:collapse;width:100%;"><tr>
+      <td style="vertical-align:top;width:50%;padding-right:6px;">${estadoCard}${filtrosCard}</td>
+      <td style="vertical-align:top;width:50%;padding-left:6px;">${entregaCard}${retencionCard}</td>
+    </tr></table>
+    ${policiesTable}
   </div>`;
 
-  const text = '\n\nCONFIGURACIÓN VIGENTE\n' +
-    rows.map(([label, value]) => `- ${label}: ${value}`).join('\n') +
-    (sourceLines.length > 0 ? '\nOverrides por source:\n' + sourceLines.map(([k, d]) => `- ${k}: ${d}`).join('\n') : '') +
-    '\n';
+  const workerTextRows = WORKERS.map(([key, label, fb]) => {
+    const r = resolve(key, fb);
+    return `- ${label}: ${r.enabled === false ? 'OFF' : 'activa'} · 1ª sync ${FIRST_SYNC_LABEL[r.firstSyncPolicy] || r.firstSyncPolicy} · día no activo: ${OFF_DAY_LABEL[r.offDayMode] || r.offDayMode} · archivados: ${r.notifyArchivedFolders === false ? 'filtra' : 'notifica'}`;
+  });
+  const deliveryTextRows = deliveryResolved.map(r =>
+    `- Entrega ${r.label}: ${r.enabled === false ? 'OFF' : 'activa'} · día no activo: ${OFF_DAY_LABEL[r.offDayMode] || r.offDayMode} · archivados: ${r.notifyArchivedFolders === false ? 'filtra' : 'notifica'}`
+  );
+
+  const text = '\n\nCONFIGURACIÓN VIGENTE (comportamiento efectivo)\n' +
+    `- Sistema: ${globallyOn ? 'activo' : 'DESHABILITADO'} (modo ${status.mode || 'production'}) · Coordinador: ${isOn(status.coordinatorEnabled) ? 'sí' : 'no'} · Cédulas: ${isOn(status.cedulasEnabled) ? 'sí' : 'no'}\n` +
+    `- Hora de entrega: ${sched.dailyNotificationHour ?? 19}:${String(sched.dailyNotificationMinute ?? 0).padStart(2, '0')} ART · Días activos: ${fmtDays(sched.activeDays)}\n` +
+    `- Fin de semana: ${weekendLine}\n` +
+    `- Filtros: tipos excluidos [${fmtList(filters.excludedMovementTypes)}] · keywords [${fmtList(filters.excludedKeywords)}]\n` +
+    `- Límites por usuario: ${limits.enforcePerUserLimits === true ? 'activos' : 'desactivados'} · Retención: sent ${retention.judicialMovementRetentionDays ?? 60} d / skipped ${retention.skippedRetentionDays ?? 30} d / logs ${retention.notificationLogRetentionDays ?? 30} d\n` +
+    'Políticas efectivas por fuente:\n' + workerTextRows.join('\n') + '\n' + deliveryTextRows.join('\n') + '\n';
 
   return { html, text };
 }
