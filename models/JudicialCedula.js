@@ -36,7 +36,7 @@ const judicialCedulaSchema = new mongoose.Schema({
 
   notificationStatus: {
     type: String,
-    enum: ['pending', 'sent', 'failed'],
+    enum: ['pending', 'sent', 'failed', 'skipped'],
     default: 'pending'
   },
 

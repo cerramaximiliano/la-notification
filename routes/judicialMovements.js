@@ -27,9 +27,30 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       created: 0,
       updated: 0,
       skipped: 0,
+      skippedDeactivated: 0,
       duplicates: 0,
       errors: []
     };
+
+    // Usuarios desactivados: no crear ni resetear sus movimientos — el cron de
+    // notificación los descartaría igual (isActive === false) y solo generan
+    // churn diario de docs 'skipped'. Un batch puede traer varios usuarios,
+    // se resuelven de una sola vez.
+    const batchUserIds = [...new Set(movements.map((mv) => mv && mv.userId).filter(Boolean).map(String))];
+    let deactivatedUserIds = new Set();
+    try {
+      const deactivated = await User.find(
+        { _id: { $in: batchUserIds }, isActive: false },
+        { _id: 1 }
+      ).lean();
+      deactivatedUserIds = new Set(deactivated.map((u) => String(u._id)));
+      if (deactivatedUserIds.size > 0) {
+        logger.info(`Webhook daily-movements: ${deactivatedUserIds.size} usuario(s) desactivado(s) en el batch, sus movimientos se omiten`);
+      }
+    } catch (lookupError) {
+      // Best-effort: si falla el lookup se procesa todo como antes.
+      logger.warn(`Webhook daily-movements: no se pudo resolver usuarios desactivados: ${lookupError.message}`);
+    }
 
     // Hora de notificación: usar la recibida o por defecto 9:00 AM
     const defaultNotifyTime = moment().hour(9).minute(0).second(0);
@@ -56,6 +77,10 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         // Validar campos requeridos
         if (!userId) {
           throw new Error('userId es requerido');
+        }
+        if (deactivatedUserIds.has(String(userId))) {
+          results.skippedDeactivated++;
+          continue;
         }
         if (!expediente || !expediente.id) {
           throw new Error('expediente.id es requerido');
@@ -210,7 +235,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       }
     }
 
-    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.errors.length} errores`);
+    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.skippedDeactivated} de usuarios desactivados, ${results.errors.length} errores`);
 
     if (results.errors.length > 0) {
       logger.error(`Se encontraron ${results.errors.length} errores procesando movimientos. Ver detalles arriba.`);

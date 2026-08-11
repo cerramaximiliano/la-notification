@@ -732,7 +732,10 @@ async function judicialMovementNotificationJob() {
     usuariosPendientes: 0,
     enviadas: 0,
     exitosos: 0,
-    fallidos: 0
+    fallidos: 0,
+    // Usuarios desactivados/no encontrados: sus pendientes se marcan 'skipped'
+    // (no 'failed') — no son errores de envío y no deben disparar alertas.
+    omitidos: 0
   };
 
   try {
@@ -805,11 +808,11 @@ async function judicialMovementNotificationJob() {
         const user = await User.findById(userId);
 
         if (!user) {
-          logger.warn(`Usuario ${userId} no encontrado, marcando movimientos como fallidos`);
+          logger.warn(`Usuario ${userId} no encontrado, marcando movimientos como omitidos`);
           await JudicialMovement.updateMany(
             { userId, notificationStatus: 'pending' },
             {
-              $set: { notificationStatus: 'failed' },
+              $set: { notificationStatus: 'skipped' },
               $push: {
                 notifications: {
                   date: new Date(),
@@ -820,18 +823,19 @@ async function judicialMovementNotificationJob() {
               }
             }
           );
-          notificationStats.fallidos++;
+          notificationStats.omitidos++;
           continue;
         }
 
-        // No notificar a cuentas desactivadas: marcar los pendientes como failed
-        // (estado terminal) para que no se reprocesen en cada corrida.
+        // No notificar a cuentas desactivadas: marcar los pendientes como skipped
+        // (estado terminal) para que no se reprocesen en cada corrida. NO es un
+        // fallo de envío: 'failed' quedaba contando como error en reportes/alertas.
         if (user.isActive === false) {
           logger.info(`Usuario ${userId} desactivado, omitiendo notificación de movimientos judiciales`);
           await JudicialMovement.updateMany(
             { userId, notificationStatus: 'pending' },
             {
-              $set: { notificationStatus: 'failed' },
+              $set: { notificationStatus: 'skipped' },
               $push: {
                 notifications: {
                   date: new Date(),
@@ -842,7 +846,7 @@ async function judicialMovementNotificationJob() {
               }
             }
           );
-          notificationStats.fallidos++;
+          notificationStats.omitidos++;
           continue;
         }
 
@@ -888,17 +892,17 @@ async function judicialMovementNotificationJob() {
         if (!user) {
           await JudicialCedula.updateMany(
             { userId, notificationStatus: 'pending' },
-            { $set: { notificationStatus: 'failed' }, $push: { notifications: { date: new Date(), type: 'system', success: false, details: 'Usuario no encontrado' } } }
+            { $set: { notificationStatus: 'skipped' }, $push: { notifications: { date: new Date(), type: 'system', success: false, details: 'Usuario no encontrado' } } }
           );
-          notificationStats.fallidos++;
+          notificationStats.omitidos++;
           continue;
         }
         if (user.isActive === false) {
           await JudicialCedula.updateMany(
             { userId, notificationStatus: 'pending' },
-            { $set: { notificationStatus: 'failed' }, $push: { notifications: { date: new Date(), type: 'system', success: false, details: 'Usuario desactivado' } } }
+            { $set: { notificationStatus: 'skipped' }, $push: { notifications: { date: new Date(), type: 'system', success: false, details: 'Usuario desactivado' } } }
           );
-          notificationStats.fallidos++;
+          notificationStats.omitidos++;
           continue;
         }
 
@@ -924,6 +928,7 @@ async function judicialMovementNotificationJob() {
 
     logger.info(`[NOTIFICACIÓN] Trabajo de notificaciones de movimientos judiciales completado:`);
     logger.info(`[NOTIFICACIÓN] - Total de notificaciones enviadas: ${notificationStats.enviadas}`);
+    logger.info(`[NOTIFICACIÓN] - Usuarios omitidos (desactivados/no encontrados): ${notificationStats.omitidos}`);
     logger.info(`[NOTIFICACIÓN] - Usuarios procesados exitosamente: ${notificationStats.exitosos}`);
     logger.info(`[NOTIFICACIÓN] - Usuarios con errores: ${notificationStats.fallidos}`);
 
