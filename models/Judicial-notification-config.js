@@ -299,6 +299,51 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         }
     },
 
+    // Banner de upgrade de plan en el email de movimientos (usuarios con
+    // carpetas archivadas). Aplicado por la-notification en la entrega.
+    planBanner: {
+        // On/off global del banner
+        enabled: {
+            type: Boolean,
+            default: true
+        },
+        // Máx. 1 banner por usuario cada N días (0 = en cada email)
+        cooldownDays: {
+            type: Number,
+            default: 7,
+            min: 0,
+            max: 90
+        },
+        // Mínimo de carpetas archivadas para mostrar el banner
+        minArchivedFolders: {
+            type: Number,
+            default: 1,
+            min: 1,
+            max: 1000
+        },
+        // Plan(es) actuales del usuario a los que NO mostrar el banner
+        // (además del tope, que nunca lo recibe porque no hay upgrade)
+        excludePlans: {
+            type: [String],
+            default: []
+        },
+        // Promoción opcional: código de DiscountCode + texto a mostrar
+        promo: {
+            enabled: {
+                type: Boolean,
+                default: false
+            },
+            code: {
+                type: String,
+                default: null
+            },
+            text: {
+                type: String,
+                default: null
+            }
+        }
+    },
+
     // Políticas de notificación de movimientos por fuente (sparse).
     // { version, defaults: {firstSyncPolicy, offDayMode, activeDays, filters,
     //   enabled, notifyArchivedFolders, cacheSourceTodayOnly},

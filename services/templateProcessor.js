@@ -395,15 +395,18 @@ function processJudicialCedulasData(cedulasByExpediente) {
  *
  * @param {Object|null} suggestion - resultado de suggestPlanUpgrade()
  * @param {string} frontBaseUrl
+ * @param {Object} [promo] - { code, text } promoción activa (opcional)
  * @returns {{html: string, text: string}}
  */
-function buildPlanUpgradeBanner(suggestion, frontBaseUrl) {
+function buildPlanUpgradeBanner(suggestion, frontBaseUrl, promo = null) {
   if (!suggestion || !suggestion.suggested) {
     return { html: '', text: '' };
   }
 
   const { archivedCount, totalNeeded, current, suggested, coversAll } = suggestion;
-  const plansUrl = `${frontBaseUrl || DEFAULT_FRONT_BASE_URL}/suscripciones/tables?source=email_movimiento_banner`;
+  const promoCode = promo && promo.code ? String(promo.code).trim() : null;
+  const plansUrl = `${frontBaseUrl || DEFAULT_FRONT_BASE_URL}/suscripciones/tables?source=email_movimiento_banner` +
+    (promoCode ? `&promo=${encodeURIComponent(promoCode)}` : '');
 
   const carpetas = archivedCount === 1 ? 'carpeta archivada' : 'carpetas archivadas';
   const priceText = suggested.price != null && suggested.price > 0
@@ -413,13 +416,22 @@ function buildPlanUpgradeBanner(suggestion, frontBaseUrl) {
     ? `admite hasta ${suggested.folderLimit} carpetas — cubre tus ${totalNeeded} causas`
     : `admite hasta ${suggested.folderLimit} carpetas`;
 
+  // Línea de promoción opcional (config planBanner.promo)
+  const promoHtml = promoCode
+    ? `<p style="margin:0 0 14px 0;font-size:13px;line-height:1.5;color:#FDE68A;">${promo.text ? `${promo.text} ` : ''}Usá el código <span style="display:inline-block;padding:1px 8px;border-radius:6px;background-color:#FBBF24;color:#0F172A;font-weight:700;letter-spacing:0.05em;">${promoCode}</span></p>`
+    : '';
+  const promoTextLine = promoCode ? `${promo.text ? `${promo.text} ` : ''}Usá el código ${promoCode}.\n` : '';
+
+  // El comentario <!--plan-banner--> es el marcador de detección: si el slot
+  // {{planBannerHtml}} desaparece del template, la entrega lo busca para
+  // saber si debe inyectar el banner por fallback.
   const html = `
-      <tr><td class="px-card" style="padding:8px 44px 16px 44px;">
+      <!--plan-banner--><tr><td class="px-card" style="padding:8px 44px 16px 44px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0F172A;border-radius:10px;">
           <tr><td style="padding:20px 24px;">
             <p style="margin:0 0 4px 0;font-size:11px;color:#93C5FD;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">Tu cuenta</p>
             <p style="margin:0 0 6px 0;font-size:15px;line-height:1.4;color:#FFFFFF;font-weight:700;">Tenés ${archivedCount} ${carpetas} que no estás viendo</p>
-            <p style="margin:0 0 14px 0;font-size:13px;line-height:1.6;color:#CBD5E1;">Tu ${current.displayName} admite hasta ${current.folderLimit} carpetas activas, por eso ${archivedCount === 1 ? 'una de tus causas quedó archivada y no recibe' : `${archivedCount} de tus causas quedaron archivadas y dejan de mostrar`} el detalle completo. Con el <span style="color:#FFFFFF;font-weight:600;">${suggested.displayName}</span>${priceText} (${coberturaText}) las recuperás todas.</p>
+            <p style="margin:0 0 14px 0;font-size:13px;line-height:1.6;color:#CBD5E1;">Tu ${current.displayName} admite hasta ${current.folderLimit} carpetas activas, por eso ${archivedCount === 1 ? 'una de tus causas quedó archivada y no recibe' : `${archivedCount} de tus causas quedaron archivadas y dejan de mostrar`} el detalle completo. Con el <span style="color:#FFFFFF;font-weight:600;">${suggested.displayName}</span>${priceText} (${coberturaText}) las recuperás todas.</p>${promoHtml}
             <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
               <td bgcolor="#3A7BFF" style="border-radius:8px;">
                 <a href="${plansUrl}" style="display:inline-block;padding:11px 22px;font-size:13px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:8px;">Mejorar mi plan&nbsp;&#8594;</a>
@@ -431,6 +443,7 @@ function buildPlanUpgradeBanner(suggestion, frontBaseUrl) {
 
   const text = `\n---\nTenés ${archivedCount} ${carpetas} que no estás viendo. ` +
     `Tu ${current.displayName} admite hasta ${current.folderLimit} carpetas; con el ${suggested.displayName}${priceText} (${coberturaText}) las recuperás todas.\n` +
+    promoTextLine +
     `Mejorar mi plan: ${plansUrl}\n`;
 
   return { html, text };

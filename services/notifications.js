@@ -3,7 +3,7 @@ const moment = require("moment");
 const momentTz = require("moment-timezone");
 const logger = require("../config/logger");
 const { sendEmail } = require("./email");
-const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder } = require("../models");
+const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder, PlanBannerSend } = require("../models");
 const policyService = require("./notificationPolicyService");
 const { addNotificationAtomic } = require("./notificationHelper");
 const { getProcessedTemplate, processJudicialMovementsData, processJudicialCedulasData, sectionHeaderHtml } = require("./templateProcessor");
@@ -1420,18 +1420,46 @@ async function sendJudicialMovementNotifications({
 
         // Banner de upgrade de plan para usuarios con carpetas archivadas
         // (slot {{planBannerHtml}} del template, después del CTA global).
+        // Gobernado por la sección planBanner del config doc: on/off, umbral
+        // de archivadas, cooldown por usuario, exclusión de planes y promo.
         // Best-effort: cualquier fallo deja el banner vacío y el email sale igual.
         let planBanner = { html: '', text: '' };
+        let planBannerMeta = null; // se registra en plan-banner-sends si el email sale
         try {
-            const archivedCount = await Folder.countDocuments({ userId, archived: true });
-            if (archivedCount > 0) {
-                const activeCount = await Folder.countDocuments({ userId, archived: { $ne: true } });
-                const { suggestPlanUpgrade } = require('./planSuggestion');
-                const suggestion = await suggestPlanUpgrade(userId, { archivedCount, activeCount });
-                if (suggestion) {
-                    const { buildPlanUpgradeBanner } = require('./templateProcessor');
-                    planBanner = buildPlanUpgradeBanner(suggestion, frontBase);
-                    logger.info(`Banner de upgrade para ${user.email}: ${archivedCount} archivadas, sugerido ${suggestion.suggested.planId}`);
+            const bannerCfg = (notifConfig && notifConfig.planBanner) || {};
+            if (bannerCfg.enabled !== false) {
+                const archivedCount = await Folder.countDocuments({ userId, archived: true });
+                const minArchived = Number.isFinite(bannerCfg.minArchivedFolders) ? bannerCfg.minArchivedFolders : 1;
+                if (archivedCount >= minArchived) {
+                    // Cooldown: máx. 1 banner por usuario cada N días (0 = siempre)
+                    const cooldownDays = Number.isFinite(bannerCfg.cooldownDays) ? bannerCfg.cooldownDays : 7;
+                    let inCooldown = false;
+                    if (cooldownDays > 0) {
+                        const since = new Date(Date.now() - cooldownDays * 24 * 3600 * 1000);
+                        inCooldown = Boolean(await PlanBannerSend.exists({ userId, sentAt: { $gte: since } }));
+                    }
+                    if (!inCooldown) {
+                        const activeCount = await Folder.countDocuments({ userId, archived: { $ne: true } });
+                        const { suggestPlanUpgrade } = require('./planSuggestion');
+                        const suggestion = await suggestPlanUpgrade(userId, { archivedCount, activeCount });
+                        const excluded = suggestion && Array.isArray(bannerCfg.excludePlans)
+                            && bannerCfg.excludePlans.includes(suggestion.current.planId);
+                        if (suggestion && !excluded) {
+                            const promo = bannerCfg.promo && bannerCfg.promo.enabled === true && bannerCfg.promo.code
+                                ? { code: bannerCfg.promo.code, text: bannerCfg.promo.text }
+                                : null;
+                            const { buildPlanUpgradeBanner } = require('./templateProcessor');
+                            planBanner = buildPlanUpgradeBanner(suggestion, frontBase, promo);
+                            planBannerMeta = {
+                                suggestedPlanId: suggestion.suggested.planId,
+                                archivedCount,
+                                promoCode: promo ? promo.code : null
+                            };
+                            logger.info(`Banner de upgrade para ${user.email}: ${archivedCount} archivadas, sugerido ${suggestion.suggested.planId}${promo ? ` (promo ${promo.code})` : ''}`);
+                        }
+                    } else {
+                        logger.debug(`Banner de upgrade omitido para ${user.email}: en cooldown (${cooldownDays} días)`);
+                    }
                 }
             }
         } catch (bannerErr) {
@@ -1454,11 +1482,25 @@ async function sendJudicialMovementNotifications({
             planBannerText: planBanner.text
         };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
-        
+
         const subject = processedTemplate.subject;
-        const htmlContent = processedTemplate.html;
-        const textContent = processedTemplate.text;
-        
+        let htmlContent = processedTemplate.html;
+        let textContent = processedTemplate.text;
+
+        // Resiliencia: si una edición del template borró el slot
+        // {{planBannerHtml}}, el banner se inyecta igual antes del cierre del
+        // body (el marcador <!--plan-banner--> delata si el slot renderizó).
+        if (planBanner.html && !htmlContent.includes('<!--plan-banner-->')) {
+            logger.warn('Template judicial-movements sin slot {{planBannerHtml}} — inyectando banner por fallback');
+            const bannerBlock = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;">${planBanner.html}</table>`;
+            htmlContent = /<\/body>/i.test(htmlContent)
+                ? htmlContent.replace(/<\/body>/i, `${bannerBlock}</body>`)
+                : htmlContent + bannerBlock;
+        }
+        if (planBanner.text && !textContent.includes('Mejorar mi plan:')) {
+            textContent = textContent + planBanner.text;
+        }
+
         logger.info('Usando template de base de datos para movimientos judiciales');
 
         // Enviar email
@@ -1471,6 +1513,15 @@ async function sendJudicialMovementNotifications({
             emailStatus = 'failed';
             failureReason = emailError.message;
             logger.error(`Error enviando email de movimientos judiciales a ${user.email}:`, emailError);
+        }
+
+        // Registrar el banner mostrado (habilita el cooldown configurable).
+        if (emailStatus === 'sent' && planBannerMeta) {
+            try {
+                await PlanBannerSend.create({ userId, ...planBannerMeta });
+            } catch (bannerLogErr) {
+                logger.warn(`No se pudo registrar plan-banner-send para ${userId}: ${bannerLogErr.message}`);
+            }
         }
 
         // Actualizar estado de notificación
