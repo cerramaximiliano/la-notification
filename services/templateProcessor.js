@@ -92,6 +92,9 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
   // Mapa expedienteKey → folderId (resuelto por el caller) para el CTA
   // "Ver causa completa" por card. Vacío = sin CTA por card.
   const folderIdByExpediente = options.folderIdByExpediente || {};
+  // Mapa expedienteKey → { archived } para el chip Activa/Archivada del
+  // header de cada card. Sin entrada = sin chip (folder no resuelto).
+  const folderInfoByExpediente = options.folderInfoByExpediente || {};
   // Primer token firmado del email — se reusa para el pixel de apertura.
   let firstToken = null;
 
@@ -122,9 +125,21 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
   // la pertenencia (antes las filas de tabla parecían desvinculadas del header).
   const expedienteTemplate = `
           <tr><td style="background-color:#F8FAFC;border-top:1px solid #E6EAF2;padding:14px 18px 10px 18px;">
-            <p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td><p style="margin:0 0 3px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">Expediente {{numberYear}} · {{fuero}}</p></td>
+              <td align="right" style="vertical-align:top;white-space:nowrap;">{{folderChipHtml}}</td>
+            </tr></table>
             <p style="margin:0;font-size:14px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
           </td></tr>{{movimientosRows}}{{folderCtaHtml}}`;
+
+  // Chip de estado del folder en el header de la card (Activa verde /
+  // Archivada ámbar). Solo cuando el caller resolvió el folder del usuario.
+  const folderChip = (info) => {
+    if (!info) return '';
+    return info.archived === true
+      ? `<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;background-color:#FFF7ED;color:#B45309;border:1px solid #FDBA74;">Archivada</span>`
+      : `<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;background-color:#ECFDF5;color:#059669;border:1px solid #6EE7B7;">Activa</span>`;
+  };
 
   // Card blanca por movimiento, sobre la superficie gris de la causa.
   const movimientoRowTemplate = `
@@ -224,18 +239,21 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
     const folderCtaHtml = folderUrl ? processTemplate(folderCtaTemplate, { folderUrl }) : '';
 
     // Procesar template del expediente
+    const folderInfo = folderInfoByExpediente[key];
     expedientesHtml += processTemplate(expedienteTemplate, {
       number: expediente.number,
       year: expediente.year,
       numberYear,
       fuero: expediente.fuero,
       caratula: expediente.caratula,
+      folderChipHtml: folderChip(folderInfo),
       movimientosRows,
       folderCtaHtml
     });
 
     // Versión texto
-    expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}\n`;
+    const folderStateText = folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '';
+    expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}${folderStateText}\n`;
     expedientesText += `Carátula: ${expediente.caratula}\n\n`;
     expedientesText += movimientosText;
     if (folderUrl) {
@@ -369,10 +387,60 @@ function processJudicialCedulasData(cedulasByExpediente) {
   return { cedulasHtml, cedulasText, cedulasExpedienteKeys: keys };
 }
 
+/**
+ * Banner de upgrade de plan para usuarios con carpetas archivadas.
+ * Se inyecta en el slot {{planBannerHtml}} del template judicial-movements
+ * (después del CTA global, antes del footer). Devuelve strings vacíos si
+ * no hay sugerencia (usuario sin archivadas o ya en el plan tope).
+ *
+ * @param {Object|null} suggestion - resultado de suggestPlanUpgrade()
+ * @param {string} frontBaseUrl
+ * @returns {{html: string, text: string}}
+ */
+function buildPlanUpgradeBanner(suggestion, frontBaseUrl) {
+  if (!suggestion || !suggestion.suggested) {
+    return { html: '', text: '' };
+  }
+
+  const { archivedCount, totalNeeded, current, suggested, coversAll } = suggestion;
+  const plansUrl = `${frontBaseUrl || DEFAULT_FRONT_BASE_URL}/suscripciones/tables?source=email_movimiento_banner`;
+
+  const carpetas = archivedCount === 1 ? 'carpeta archivada' : 'carpetas archivadas';
+  const priceText = suggested.price != null && suggested.price > 0
+    ? ` por ${suggested.currency} ${suggested.price}/mes`
+    : '';
+  const coberturaText = coversAll
+    ? `admite hasta ${suggested.folderLimit} carpetas — cubre tus ${totalNeeded} causas`
+    : `admite hasta ${suggested.folderLimit} carpetas`;
+
+  const html = `
+      <tr><td class="px-card" style="padding:8px 44px 16px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0F172A;border-radius:10px;">
+          <tr><td style="padding:20px 24px;">
+            <p style="margin:0 0 4px 0;font-size:11px;color:#93C5FD;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">Tu cuenta</p>
+            <p style="margin:0 0 6px 0;font-size:15px;line-height:1.4;color:#FFFFFF;font-weight:700;">Tenés ${archivedCount} ${carpetas} que no estás viendo</p>
+            <p style="margin:0 0 14px 0;font-size:13px;line-height:1.6;color:#CBD5E1;">Tu ${current.displayName} admite hasta ${current.folderLimit} carpetas activas, por eso ${archivedCount === 1 ? 'una de tus causas quedó archivada y no recibe' : `${archivedCount} de tus causas quedaron archivadas y dejan de mostrar`} el detalle completo. Con el <span style="color:#FFFFFF;font-weight:600;">${suggested.displayName}</span>${priceText} (${coberturaText}) las recuperás todas.</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td bgcolor="#3A7BFF" style="border-radius:8px;">
+                <a href="${plansUrl}" style="display:inline-block;padding:11px 22px;font-size:13px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:8px;">Mejorar mi plan&nbsp;&#8594;</a>
+              </td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>`;
+
+  const text = `\n---\nTenés ${archivedCount} ${carpetas} que no estás viendo. ` +
+    `Tu ${current.displayName} admite hasta ${current.folderLimit} carpetas; con el ${suggested.displayName}${priceText} (${coberturaText}) las recuperás todas.\n` +
+    `Mejorar mi plan: ${plansUrl}\n`;
+
+  return { html, text };
+}
+
 module.exports = {
   processTemplate,
   getProcessedTemplate,
   processJudicialMovementsData,
   processJudicialCedulasData,
+  buildPlanUpgradeBanner,
   sectionHeaderHtml
 };

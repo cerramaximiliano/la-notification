@@ -1358,16 +1358,22 @@ async function sendJudicialMovementNotifications({
             usePublicMovementLinks: notifConfig?.contentConfig?.usePublicMovementLinks === true,
         };
 
-        // Folders para los CTAs "Ver causa completa" (por card y global),
-        // reutilizando el mapa resuelto durante el enforcement central.
+        // Folders para los CTAs "Ver causa completa" (por card y global) y
+        // para el chip Activa/Archivada del header de cada card, reutilizando
+        // el mapa resuelto durante el enforcement central.
         const folderIdByExpediente = {};
+        const folderInfoByExpediente = {};
         for (const [key, data] of Object.entries(movementsByExpediente)) {
             const causaId = data.expediente?.id;
             if (!causaId) continue;
             const folder = folderByCausa[causaId];
-            if (folder) folderIdByExpediente[key] = String(folder._id);
+            if (folder) {
+                folderIdByExpediente[key] = String(folder._id);
+                folderInfoByExpediente[key] = { archived: folder.archived === true };
+            }
         }
         movementLinkOptions.folderIdByExpediente = folderIdByExpediente;
+        movementLinkOptions.folderInfoByExpediente = folderInfoByExpediente;
         // Título de la banda de sección (contenedor v3): "Movimientos" cuando el
         // email también trae cédulas, "Movimientos nuevos" cuando viene solo.
         movementLinkOptions.sectionTitle = Object.keys(cedulasByExpediente).length > 0 ? 'Movimientos' : 'Movimientos nuevos';
@@ -1412,6 +1418,26 @@ async function sendJudicialMovementNotifications({
         const ctaUrl = singleFolderId ? `${frontBase}/apps/folders/details/${singleFolderId}` : `${frontBase}/apps/folders/list`;
         const ctaLabel = singleFolderId ? 'Ver la causa completa' : 'Ver mis causas';
 
+        // Banner de upgrade de plan para usuarios con carpetas archivadas
+        // (slot {{planBannerHtml}} del template, después del CTA global).
+        // Best-effort: cualquier fallo deja el banner vacío y el email sale igual.
+        let planBanner = { html: '', text: '' };
+        try {
+            const archivedCount = await Folder.countDocuments({ userId, archived: true });
+            if (archivedCount > 0) {
+                const activeCount = await Folder.countDocuments({ userId, archived: { $ne: true } });
+                const { suggestPlanUpgrade } = require('./planSuggestion');
+                const suggestion = await suggestPlanUpgrade(userId, { archivedCount, activeCount });
+                if (suggestion) {
+                    const { buildPlanUpgradeBanner } = require('./templateProcessor');
+                    planBanner = buildPlanUpgradeBanner(suggestion, frontBase);
+                    logger.info(`Banner de upgrade para ${user.email}: ${archivedCount} archivadas, sugerido ${suggestion.suggested.planId}`);
+                }
+            }
+        } catch (bannerErr) {
+            logger.warn(`No se pudo armar el banner de plan para ${user.email}: ${bannerErr.message}`);
+        }
+
         const templateVariables = {
             ...movementVars,
             cedulasHtml: cedulaData.cedulasHtml,
@@ -1423,7 +1449,9 @@ async function sendJudicialMovementNotifications({
             movimientosHeader,
             movimientosHeaderText,
             ctaUrl,
-            ctaLabel
+            ctaLabel,
+            planBannerHtml: planBanner.html,
+            planBannerText: planBanner.text
         };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
         
