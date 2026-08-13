@@ -1,23 +1,27 @@
 const moment = require('moment');
 
+// Pill chica estilo unificado (mismo lenguaje visual que el email de movimientos)
+function pill(text, bg, color, border) {
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;background-color:${bg};color:${color};border:1px solid ${border};">${text}</span>`;
+}
+
 /**
- * Procesa datos de tareas para generar las variables del template
+ * Procesa datos de tareas para generar las variables del template.
+ * Diseño unificado 2026-08: cards blancas sobre la superficie gris del shell.
  * @param {Array} tasks - Array de tareas próximas a vencer
  * @param {Object} user - Usuario destinatario
  * @returns {Object} - Variables procesadas para el template
  */
 function processTasksData(tasks, user) {
-  // Función para mapear la prioridad a colores en HTML
-  const getPriorityColor = (priority) => {
+  const priorityPill = (priority) => {
     switch (priority) {
-      case 'alta': return 'background-color: #ffdddd; color: #d32f2f;';
-      case 'media': return 'background-color: #fff9c4; color: #f57f17;';
-      case 'baja': return 'background-color: #e8f5e9; color: #388e3c;';
+      case 'alta': return pill('Prioridad alta', '#FEF2F2', '#DC2626', '#FECACA');
+      case 'media': return pill('Prioridad media', '#FFF7ED', '#B45309', '#FDBA74');
+      case 'baja': return pill('Prioridad baja', '#ECFDF5', '#059669', '#6EE7B7');
       default: return '';
     }
   };
 
-  // Función para mostrar el estado en español
   const getStatusText = (status) => {
     switch (status) {
       case 'pendiente': return 'Pendiente';
@@ -29,34 +33,17 @@ function processTasksData(tasks, user) {
     }
   };
 
-  // Generar tabla HTML
-  let tasksTableHtml = `
-    <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-      <thead>
-        <tr style="background-color: #f0f4f8;">
-          <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Fecha de vencimiento</th>
-          <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Tarea</th>
-          <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Prioridad</th>
-          <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Estado</th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-  // Generar texto plano
+  let tasksTableHtml = '';
   let tasksListText = '';
 
-  // Procesar cada tarea
   tasks.forEach(task => {
     const dueDate = new Date(task.dueDate);
-    
-    // Formato de fecha: DD/MM/YYYY
     const day = dueDate.getUTCDate().toString().padStart(2, '0');
     const month = (dueDate.getUTCMonth() + 1).toString().padStart(2, '0');
     const year = dueDate.getUTCFullYear();
     const formattedDate = `${day}/${month}/${year}`;
 
-    // Obtener la hora si existe
-    let formattedTime = "";
+    let formattedTime = '';
     if (task.dueTime) {
       const [hours, minutes] = task.dueTime.split(':');
       const hour12 = (parseInt(hours) % 12) || 12;
@@ -70,29 +57,25 @@ function processTasksData(tasks, user) {
       formattedTime = `${hour12}:${minute} ${ampm}`;
     }
 
-    // Obtener color y texto para la prioridad
-    const priorityColor = getPriorityColor(task.priority);
     const statusText = getStatusText(task.status);
 
-    // Agregar fila a la tabla HTML
     tasksTableHtml += `
-      <tr>
-        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${formattedDate}</td>
-        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${task.name}</td>
-        <td style="border: 1px solid #e5e7eb; padding: 12px; ${priorityColor}">${task.priority.toUpperCase()}</td>
-        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #4b5563;">${statusText}</td>
-      </tr>`;
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
+        <tr><td style="padding:12px 14px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:13px;font-weight:600;color:#0F172A;">${task.name}</td>
+            <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">Vence ${formattedDate}</td>
+          </tr></table>
+          ${task.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${task.description}</p>` : ''}
+          <p style="margin:8px 0 0 0;">${priorityPill(task.priority)} ${pill(statusText, '#EFF4FF', '#3A7BFF', '#C7D8FF')}</p>
+        </td></tr>
+      </table>`;
 
-    // Agregar al texto plano
     tasksListText += `- ${formattedDate} ${formattedTime}: ${task.name} (Prioridad: ${task.priority.toUpperCase()}, Estado: ${statusText})\n`;
     if (task.description) {
       tasksListText += `  ${task.description}\n`;
     }
   });
-
-  tasksTableHtml += `
-      </tbody>
-    </table>`;
 
   return {
     userName: user.name || user.email || 'Usuario',

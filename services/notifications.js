@@ -261,15 +261,16 @@ async function sendMovementNotifications({
             return movement._id;
         });
         
-        // Procesar datos de los movimientos
-        const templateVariables = processMovementsData(upcomingMovements, user);
+        // Procesar datos de los movimientos + banners compartidos
+        const { resolveEmailBanners, applyBannerFallback } = require('./emailBanners');
+        const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'vencimiento' });
+        const templateVariables = { ...processMovementsData(upcomingMovements, user), ...banners.templateVars };
         
         // Obtener template procesado
         const processedTemplate = await getProcessedTemplate('notification', 'movements-expiration', templateVariables);
         
         const subject = processedTemplate.subject;
-        const htmlContent = processedTemplate.html;
-        const textContent = processedTemplate.text;
+        let { htmlContent, textContent } = applyBannerFallback(processedTemplate.html, processedTemplate.text, banners);
         
         logger.info('Usando template de base de datos para notificaciones de movimientos');
         
@@ -279,6 +280,7 @@ async function sendMovementNotifications({
         
         try {
             await sendEmail(user.email, subject, htmlContent, textContent);
+            await banners.recordIfShown();
         } catch (emailError) {
             emailStatus = 'failed';
             failureReason = emailError.message;
@@ -569,20 +571,22 @@ async function sendCalendarNotifications({
             return event._id;
         });
         
-        // Procesar datos de los eventos
-        const templateVariables = processEventsData(upcomingEvents, user);
+        // Procesar datos de los eventos + banners compartidos
+        const { resolveEmailBanners, applyBannerFallback } = require('./emailBanners');
+        const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'calendario' });
+        const templateVariables = { ...processEventsData(upcomingEvents, user), ...banners.templateVars };
         
         // Obtener template procesado
         const processedTemplate = await getProcessedTemplate('notification', 'calendar-events', templateVariables);
         
         const subject = processedTemplate.subject;
-        const htmlContent = processedTemplate.html;
-        const textContent = processedTemplate.text;
+        const { htmlContent, textContent } = applyBannerFallback(processedTemplate.html, processedTemplate.text, banners);
         
         logger.info('Usando template de base de datos para notificaciones de calendario');
         
         // Enviar el correo electrónico
         await sendEmail(user.email, subject, htmlContent, textContent);
+        await banners.recordIfShown();
 
         // Registrar la notificación enviada en cada evento
         const notificationDetails = {
@@ -844,20 +848,22 @@ async function sendTaskNotifications({
         // Crear un array para los IDs de tareas que se notificarán
         const notifiedTaskIds = upcomingTasks.map(task => task._id);
         
-        // Procesar datos de las tareas
-        const templateVariables = processTasksData(upcomingTasks, user);
+        // Procesar datos de las tareas + banners compartidos
+        const { resolveEmailBanners, applyBannerFallback } = require('./emailBanners');
+        const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'tareas' });
+        const templateVariables = { ...processTasksData(upcomingTasks, user), ...banners.templateVars };
         
         // Obtener template procesado
         const processedTemplate = await getProcessedTemplate('notification', 'tasks-reminder', templateVariables);
         
         const subject = processedTemplate.subject;
-        const htmlContent = processedTemplate.html;
-        const textContent = processedTemplate.text;
+        const { htmlContent, textContent } = applyBannerFallback(processedTemplate.html, processedTemplate.text, banners);
         
         logger.info('Usando template de base de datos para notificaciones de tareas');
         
         // Enviar el correo electrónico (ya no necesita generateEmailTemplate porque el template incluye todo)
         await sendEmail(user.email, subject, htmlContent, textContent);
+        await banners.recordIfShown();
 
         // Crear el objeto de notificación que se añadirá a cada tarea
         const notificationDetails = {
@@ -1418,53 +1424,11 @@ async function sendJudicialMovementNotifications({
         const ctaUrl = singleFolderId ? `${frontBase}/apps/folders/details/${singleFolderId}` : `${frontBase}/apps/folders/list`;
         const ctaLabel = singleFolderId ? 'Ver la causa completa' : 'Ver mis causas';
 
-        // Banner de upgrade de plan para usuarios con carpetas archivadas
-        // (slot {{planBannerHtml}} del template, después del CTA global).
-        // Gobernado por la sección planBanner del config doc: on/off, umbral
-        // de archivadas, cooldown por usuario, exclusión de planes y promo.
-        // Best-effort: cualquier fallo deja el banner vacío y el email sale igual.
-        let planBanner = { html: '', text: '' };
-        let planBannerMeta = null; // se registra en plan-banner-sends si el email sale
-        try {
-            const bannerCfg = (notifConfig && notifConfig.planBanner) || {};
-            if (bannerCfg.enabled !== false) {
-                const archivedCount = await Folder.countDocuments({ userId, archived: true });
-                const minArchived = Number.isFinite(bannerCfg.minArchivedFolders) ? bannerCfg.minArchivedFolders : 1;
-                if (archivedCount >= minArchived) {
-                    // Cooldown: máx. 1 banner por usuario cada N días (0 = siempre)
-                    const cooldownDays = Number.isFinite(bannerCfg.cooldownDays) ? bannerCfg.cooldownDays : 7;
-                    let inCooldown = false;
-                    if (cooldownDays > 0) {
-                        const since = new Date(Date.now() - cooldownDays * 24 * 3600 * 1000);
-                        inCooldown = Boolean(await PlanBannerSend.exists({ userId, sentAt: { $gte: since } }));
-                    }
-                    if (!inCooldown) {
-                        const activeCount = await Folder.countDocuments({ userId, archived: { $ne: true } });
-                        const { suggestPlanUpgrade } = require('./planSuggestion');
-                        const suggestion = await suggestPlanUpgrade(userId, { archivedCount, activeCount });
-                        const excluded = suggestion && Array.isArray(bannerCfg.excludePlans)
-                            && bannerCfg.excludePlans.includes(suggestion.current.planId);
-                        if (suggestion && !excluded) {
-                            const promo = bannerCfg.promo && bannerCfg.promo.enabled === true && bannerCfg.promo.code
-                                ? { code: bannerCfg.promo.code, text: bannerCfg.promo.text }
-                                : null;
-                            const { buildPlanUpgradeBanner } = require('./templateProcessor');
-                            planBanner = buildPlanUpgradeBanner(suggestion, frontBase, promo);
-                            planBannerMeta = {
-                                suggestedPlanId: suggestion.suggested.planId,
-                                archivedCount,
-                                promoCode: promo ? promo.code : null
-                            };
-                            logger.info(`Banner de upgrade para ${user.email}: ${archivedCount} archivadas, sugerido ${suggestion.suggested.planId}${promo ? ` (promo ${promo.code})` : ''}`);
-                        }
-                    } else {
-                        logger.debug(`Banner de upgrade omitido para ${user.email}: en cooldown (${cooldownDays} días)`);
-                    }
-                }
-            }
-        } catch (bannerErr) {
-            logger.warn(`No se pudo armar el banner de plan para ${user.email}: ${bannerErr.message}`);
-        }
+        // Banners compartidos (plan upgrade + feature/anuncio), gobernados por
+        // el config doc. La lógica vive en emailBanners para reusarla en todos
+        // los tipos de email (calendario, tareas, vencimientos, caducidad...).
+        const { resolveEmailBanners } = require('./emailBanners');
+        const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'movimiento' });
 
         const templateVariables = {
             ...movementVars,
@@ -1478,8 +1442,7 @@ async function sendJudicialMovementNotifications({
             movimientosHeaderText,
             ctaUrl,
             ctaLabel,
-            planBannerHtml: planBanner.html,
-            planBannerText: planBanner.text
+            ...banners.templateVars
         };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
 
@@ -1487,18 +1450,25 @@ async function sendJudicialMovementNotifications({
         let htmlContent = processedTemplate.html;
         let textContent = processedTemplate.text;
 
-        // Resiliencia: si una edición del template borró el slot
-        // {{planBannerHtml}}, el banner se inyecta igual antes del cierre del
-        // body (el marcador <!--plan-banner--> delata si el slot renderizó).
-        if (planBanner.html && !htmlContent.includes('<!--plan-banner-->')) {
-            logger.warn('Template judicial-movements sin slot {{planBannerHtml}} — inyectando banner por fallback');
-            const bannerBlock = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;">${planBanner.html}</table>`;
+        // Resiliencia: si una edición del template borró los slots de banners,
+        // se inyectan igual antes del cierre del body (los marcadores
+        // <!--plan-banner--> / <!--feature-banner--> delatan si renderizaron).
+        const missingBanners = [
+            banners.templateVars.planBannerHtml && !htmlContent.includes('<!--plan-banner-->') ? banners.templateVars.planBannerHtml : null,
+            banners.templateVars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? banners.templateVars.featureBannerHtml : null
+        ].filter(Boolean);
+        if (missingBanners.length > 0) {
+            logger.warn('Template judicial-movements sin slot(s) de banner — inyectando por fallback');
+            const bannerBlock = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;">${missingBanners.join('')}</table>`;
             htmlContent = /<\/body>/i.test(htmlContent)
                 ? htmlContent.replace(/<\/body>/i, `${bannerBlock}</body>`)
                 : htmlContent + bannerBlock;
         }
-        if (planBanner.text && !textContent.includes('Mejorar mi plan:')) {
-            textContent = textContent + planBanner.text;
+        if (banners.templateVars.planBannerText && !textContent.includes('Mejorar mi plan:')) {
+            textContent = textContent + banners.templateVars.planBannerText;
+        }
+        if (banners.templateVars.featureBannerText && !textContent.includes(banners.templateVars.featureBannerText.trim().split('\n')[1] || '@@')) {
+            textContent = textContent + banners.templateVars.featureBannerText;
         }
 
         logger.info('Usando template de base de datos para movimientos judiciales');
@@ -1516,12 +1486,8 @@ async function sendJudicialMovementNotifications({
         }
 
         // Registrar el banner mostrado (habilita el cooldown configurable).
-        if (emailStatus === 'sent' && planBannerMeta) {
-            try {
-                await PlanBannerSend.create({ userId, ...planBannerMeta });
-            } catch (bannerLogErr) {
-                logger.warn(`No se pudo registrar plan-banner-send para ${userId}: ${bannerLogErr.message}`);
-            }
+        if (emailStatus === 'sent') {
+            await banners.recordIfShown();
         }
 
         // Actualizar estado de notificación
@@ -1883,13 +1849,27 @@ async function sendFolderInactivityNotifications({
         let caducityResult = { notified: false, count: 0 };
         let prescriptionResult = { notified: false, count: 0 };
 
+        // Banners compartidos (se resuelven una vez para ambos emails; el
+        // cooldown del banner de plan se registra una sola vez).
+        const { resolveEmailBanners: resolveBannersInactivity, applyBannerFallback: applyFallbackInactivity } = require('./emailBanners');
+        const inactivityBanners = await resolveBannersInactivity(userId, user, { sourceEmail: 'inactividad' });
+        let inactivityBannerRecorded = false;
+        const recordInactivityBanner = async () => {
+            if (!inactivityBannerRecorded) {
+                inactivityBannerRecorded = true;
+                await inactivityBanners.recordIfShown();
+            }
+        };
+
         // Enviar notificación de caducidad si hay folders
         if (caducityFolders.length > 0) {
             try {
-                const templateVariables = processCaducityData(caducityFolders, user, inactivitySettings);
+                const templateVariables = { ...processCaducityData(caducityFolders, user, inactivitySettings), ...inactivityBanners.templateVars };
                 const processedTemplate = await getProcessedTemplate('notification', 'folder-caducity', templateVariables);
+                const adjusted = applyFallbackInactivity(processedTemplate.html, processedTemplate.text, inactivityBanners);
 
-                await sendEmail(user.email, processedTemplate.subject, processedTemplate.html, processedTemplate.text);
+                await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent);
+                await recordInactivityBanner();
 
                 // Registrar notificación en cada folder
                 const notificationDetails = {
@@ -1918,10 +1898,12 @@ async function sendFolderInactivityNotifications({
         // Enviar notificación de prescripción si hay folders
         if (prescriptionFolders.length > 0) {
             try {
-                const templateVariables = processPrescriptionData(prescriptionFolders, user, inactivitySettings);
+                const templateVariables = { ...processPrescriptionData(prescriptionFolders, user, inactivitySettings), ...inactivityBanners.templateVars };
                 const processedTemplate = await getProcessedTemplate('notification', 'folder-prescription', templateVariables);
+                const adjusted = applyFallbackInactivity(processedTemplate.html, processedTemplate.text, inactivityBanners);
 
-                await sendEmail(user.email, processedTemplate.subject, processedTemplate.html, processedTemplate.text);
+                await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent);
+                await recordInactivityBanner();
 
                 // Registrar notificación en cada folder
                 const notificationDetails = {

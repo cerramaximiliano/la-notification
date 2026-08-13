@@ -45,6 +45,71 @@ function calculateDaysRemaining(lastActivityDate, limitDays) {
   return limitDate.diff(today, 'days');
 }
 
+// Pill chica estilo unificado (mismo lenguaje visual que el email de movimientos)
+function pill(text, bg, color, border) {
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;background-color:${bg};color:${color};border:1px solid ${border};">${text}</span>`;
+}
+
+/**
+ * Cards de folders (diseño unificado 2026-08: cards blancas sobre la
+ * superficie gris del shell). Compartido por caducidad y prescripción.
+ *
+ * @param {Array} folders
+ * @param {Object} settings
+ * @param {'caducity'|'prescription'} kind
+ * @returns {{foldersTableHtml: string, foldersListText: string}}
+ */
+function buildFolderCards(folders, settings, kind) {
+  const limitDays = kind === 'caducity' ? settings.caducityDays : settings.prescriptionDays;
+  const limitLabel = kind === 'caducity' ? 'Caducidad' : 'Prescripción';
+  // Umbrales de urgencia distintos: caducidad se mide en días cortos,
+  // prescripción en ventanas más largas (mismos cortes que el diseño previo).
+  const urgentAt = kind === 'caducity' ? 3 : 7;
+  const warnAt = kind === 'caducity' ? 7 : 30;
+
+  let foldersTableHtml = '';
+  let foldersListText = '';
+
+  folders.forEach(folder => {
+    const lastActivityDate = getMostRecentDate(folder);
+    const limitDate = moment.utc(lastActivityDate).add(limitDays, 'days');
+    const daysRemaining = calculateDaysRemaining(lastActivityDate, limitDays);
+
+    const formattedLastActivity = moment.utc(lastActivityDate).format('DD/MM/YYYY');
+    const formattedLimitDate = limitDate.format('DD/MM/YYYY');
+
+    let urgencyPill;
+    if (daysRemaining <= 0) {
+      urgencyPill = pill('Vencido', '#FEF2F2', '#DC2626', '#FECACA');
+    } else if (daysRemaining <= urgentAt) {
+      urgencyPill = pill(`${daysRemaining} día(s)`, '#FEF2F2', '#DC2626', '#FECACA');
+    } else if (daysRemaining <= warnAt) {
+      urgencyPill = pill(`${daysRemaining} días`, '#FFF7ED', '#B45309', '#FDBA74');
+    } else {
+      urgencyPill = pill(`${daysRemaining} días`, '#EFF4FF', '#3A7BFF', '#C7D8FF');
+    }
+
+    foldersTableHtml += `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
+        <tr><td style="padding:12px 14px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:13px;font-weight:600;color:#0F172A;">${folder.folderName}</td>
+            <td align="right" style="white-space:nowrap;">${urgencyPill}</td>
+          </tr></table>
+          ${folder.materia ? `<p style="margin:4px 0 0 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${folder.materia}</p>` : ''}
+          <p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">Última actividad: <b>${formattedLastActivity}</b> &nbsp;·&nbsp; ${limitLabel}: <b>${formattedLimitDate}</b></p>
+        </td></tr>
+      </table>`;
+
+    foldersListText += `- ${folder.folderName} (${folder.materia || 'Sin materia'})\n`;
+    foldersListText += `  Última actividad: ${formattedLastActivity}\n`;
+    foldersListText += `  Fecha ${limitLabel.toLowerCase()}: ${formattedLimitDate}\n`;
+    foldersListText += `  Días restantes: ${daysRemaining <= 0 ? 'VENCIDO' : daysRemaining}\n\n`;
+  });
+
+  return { foldersTableHtml, foldersListText };
+}
+
 /**
  * Procesa datos de folders para alertas de caducidad
  * @param {Array} folders - Array de folders con alerta de caducidad
@@ -53,69 +118,7 @@ function calculateDaysRemaining(lastActivityDate, limitDays) {
  * @returns {Object} - Variables procesadas para el template
  */
 function processCaducityData(folders, user, settings) {
-  // Generar tabla HTML
-  let foldersTableHtml = `
-    <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-      <thead>
-        <tr style="background-color: #fee2e2;">
-          <th style="border: 1px solid #fca5a5; padding: 12px; text-align: left; font-weight: 600; color: #991b1b;">Carpeta</th>
-          <th style="border: 1px solid #fca5a5; padding: 12px; text-align: left; font-weight: 600; color: #991b1b;">Materia</th>
-          <th style="border: 1px solid #fca5a5; padding: 12px; text-align: left; font-weight: 600; color: #991b1b;">Última Actividad</th>
-          <th style="border: 1px solid #fca5a5; padding: 12px; text-align: left; font-weight: 600; color: #991b1b;">Fecha Caducidad</th>
-          <th style="border: 1px solid #fca5a5; padding: 12px; text-align: left; font-weight: 600; color: #991b1b;">Días Restantes</th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-  // Generar texto plano
-  let foldersListText = '';
-
-  // Procesar cada folder
-  folders.forEach(folder => {
-    const lastActivityDate = getMostRecentDate(folder);
-    const caducityDate = moment.utc(lastActivityDate).add(settings.caducityDays, 'days');
-    const daysRemaining = calculateDaysRemaining(lastActivityDate, settings.caducityDays);
-
-    // Formato de fechas
-    const formattedLastActivity = moment.utc(lastActivityDate).format('DD/MM/YYYY');
-    const formattedCaducityDate = caducityDate.format('DD/MM/YYYY');
-
-    // Determinar el estilo de la fila según urgencia
-    let rowStyle = '';
-    let urgencyText = '';
-    if (daysRemaining <= 0) {
-      rowStyle = 'background-color: #fee2e2;'; // Rojo - vencido
-      urgencyText = '<strong style="color: #dc2626;">VENCIDO</strong>';
-    } else if (daysRemaining <= 3) {
-      rowStyle = 'background-color: #fef3c7;'; // Amarillo - muy urgente
-      urgencyText = `<strong style="color: #d97706;">${daysRemaining}</strong>`;
-    } else if (daysRemaining <= 7) {
-      rowStyle = 'background-color: #fef9c3;'; // Amarillo claro - urgente
-      urgencyText = `<strong style="color: #ca8a04;">${daysRemaining}</strong>`;
-    } else {
-      urgencyText = `${daysRemaining}`;
-    }
-
-    // Agregar fila a la tabla HTML
-    foldersTableHtml += `
-      <tr${rowStyle ? ` style="${rowStyle}"` : ''}>
-        <td style="border: 1px solid #fca5a5; padding: 12px; color: #7f1d1d;">${folder.folderName}</td>
-        <td style="border: 1px solid #fca5a5; padding: 12px; color: #7f1d1d;">${folder.materia || '-'}</td>
-        <td style="border: 1px solid #fca5a5; padding: 12px; color: #7f1d1d;">${formattedLastActivity}</td>
-        <td style="border: 1px solid #fca5a5; padding: 12px; color: #7f1d1d;">${formattedCaducityDate}</td>
-        <td style="border: 1px solid #fca5a5; padding: 12px; color: #7f1d1d; text-align: center;">${urgencyText}</td>
-      </tr>`;
-
-    // Agregar al texto plano
-    foldersListText += `- ${folder.folderName} (${folder.materia || 'Sin materia'})\n`;
-    foldersListText += `  Última actividad: ${formattedLastActivity}\n`;
-    foldersListText += `  Fecha caducidad: ${formattedCaducityDate}\n`;
-    foldersListText += `  Días restantes: ${daysRemaining <= 0 ? 'VENCIDO' : daysRemaining}\n\n`;
-  });
-
-  foldersTableHtml += `
-      </tbody>
-    </table>`;
+  const { foldersTableHtml, foldersListText } = buildFolderCards(folders, settings, 'caducity');
 
   return {
     userName: user.name || user.email || 'Usuario',
@@ -139,69 +142,7 @@ function processCaducityData(folders, user, settings) {
  * @returns {Object} - Variables procesadas para el template
  */
 function processPrescriptionData(folders, user, settings) {
-  // Generar tabla HTML
-  let foldersTableHtml = `
-    <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-      <thead>
-        <tr style="background-color: #fef3c7;">
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Carpeta</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Materia</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Última Actividad</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Fecha Prescripción</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Días Restantes</th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-  // Generar texto plano
-  let foldersListText = '';
-
-  // Procesar cada folder
-  folders.forEach(folder => {
-    const lastActivityDate = getMostRecentDate(folder);
-    const prescriptionDate = moment.utc(lastActivityDate).add(settings.prescriptionDays, 'days');
-    const daysRemaining = calculateDaysRemaining(lastActivityDate, settings.prescriptionDays);
-
-    // Formato de fechas
-    const formattedLastActivity = moment.utc(lastActivityDate).format('DD/MM/YYYY');
-    const formattedPrescriptionDate = prescriptionDate.format('DD/MM/YYYY');
-
-    // Determinar el estilo de la fila según urgencia
-    let rowStyle = '';
-    let urgencyText = '';
-    if (daysRemaining <= 0) {
-      rowStyle = 'background-color: #fee2e2;'; // Rojo - vencido
-      urgencyText = '<strong style="color: #dc2626;">VENCIDO</strong>';
-    } else if (daysRemaining <= 7) {
-      rowStyle = 'background-color: #fef3c7;'; // Amarillo - muy urgente
-      urgencyText = `<strong style="color: #d97706;">${daysRemaining}</strong>`;
-    } else if (daysRemaining <= 30) {
-      rowStyle = 'background-color: #fef9c3;'; // Amarillo claro - urgente
-      urgencyText = `<strong style="color: #ca8a04;">${daysRemaining}</strong>`;
-    } else {
-      urgencyText = `${daysRemaining}`;
-    }
-
-    // Agregar fila a la tabla HTML
-    foldersTableHtml += `
-      <tr${rowStyle ? ` style="${rowStyle}"` : ''}>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${folder.folderName}</td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${folder.materia || '-'}</td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${formattedLastActivity}</td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${formattedPrescriptionDate}</td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f; text-align: center;">${urgencyText}</td>
-      </tr>`;
-
-    // Agregar al texto plano
-    foldersListText += `- ${folder.folderName} (${folder.materia || 'Sin materia'})\n`;
-    foldersListText += `  Última actividad: ${formattedLastActivity}\n`;
-    foldersListText += `  Fecha prescripción: ${formattedPrescriptionDate}\n`;
-    foldersListText += `  Días restantes: ${daysRemaining <= 0 ? 'VENCIDO' : daysRemaining}\n\n`;
-  });
-
-  foldersTableHtml += `
-      </tbody>
-    </table>`;
+  const { foldersTableHtml, foldersListText } = buildFolderCards(folders, settings, 'prescription');
 
   return {
     userName: user.name || user.email || 'Usuario',

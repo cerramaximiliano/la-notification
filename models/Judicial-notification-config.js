@@ -344,6 +344,37 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         }
     },
 
+    // Banner de anuncio/feature en los emails de notificación al usuario
+    // (todos los tipos). Definido por el admin; por default no se muestra
+    // junto al banner de plan para no apilar banners.
+    featureBanner: {
+        enabled: {
+            type: Boolean,
+            default: false
+        },
+        title: {
+            type: String,
+            default: null
+        },
+        text: {
+            type: String,
+            default: null
+        },
+        ctaLabel: {
+            type: String,
+            default: null
+        },
+        ctaUrl: {
+            type: String,
+            default: null
+        },
+        // Mostrar aunque el email ya lleve el banner de plan
+        showWithPlanBanner: {
+            type: Boolean,
+            default: false
+        }
+    },
+
     // Políticas de notificación de movimientos por fuente (sparse).
     // { version, defaults: {firstSyncPolicy, offDayMode, activeDays, filters,
     //   enabled, notifyArchivedFolders, cacheSourceTodayOnly},

@@ -1,61 +1,47 @@
 const moment = require('moment');
 
+// Pill chica estilo unificado (mismo lenguaje visual que el email de movimientos)
+function pill(text, bg, color, border) {
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;background-color:${bg};color:${color};border:1px solid ${border};">${text}</span>`;
+}
+
 /**
- * Procesa datos de movimientos próximos a expirar para generar las variables del template
+ * Procesa datos de movimientos próximos a expirar para generar las variables del template.
+ * Diseño unificado 2026-08: cards blancas sobre la superficie gris del shell.
  * @param {Array} movements - Array de movimientos próximos a expirar
  * @param {Object} user - Usuario destinatario
  * @returns {Object} - Variables procesadas para el template
  */
 function processMovementsData(movements, user) {
-  // Generar tabla HTML
-  let movementsTableHtml = `
-    <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-      <thead>
-        <tr style="background-color: #fef3c7;">
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Fecha de expiración</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Título</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Tipo de movimiento</th>
-          <th style="border: 1px solid #fbbf24; padding: 12px; text-align: left; font-weight: 600; color: #92400e;">Descripción</th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-  // Generar texto plano
+  let movementsTableHtml = '';
   let movementsListText = '';
 
-  // Procesar cada movimiento
-  movements.forEach((movement, index) => {
-    // Convertir fecha a UTC ignorando la zona horaria
+  movements.forEach((movement) => {
     const expDate = moment.utc(movement.dateExpiration);
-    
-    // Formatear fecha en DD/MM/YYYY usando UTC
     const formattedExpirationDate = expDate.format('DD/MM/YYYY');
-    
-    // Calcular días hasta la expiración
     const daysUntilExpiration = expDate.diff(moment.utc().startOf('day'), 'days');
-    
-    // Determinar el estilo de la fila según urgencia
-    let rowStyle = '';
-    if (daysUntilExpiration <= 1) {
-      rowStyle = 'background-color: #fee2e2;'; // Rojo claro para muy urgente
+
+    let urgencyPill = '';
+    if (daysUntilExpiration <= 0) {
+      urgencyPill = ` ${pill('Vence hoy', '#FEF2F2', '#DC2626', '#FECACA')}`;
+    } else if (daysUntilExpiration === 1) {
+      urgencyPill = ` ${pill('Vence mañana', '#FFF7ED', '#B45309', '#FDBA74')}`;
     } else if (daysUntilExpiration <= 3) {
-      rowStyle = 'background-color: #fef3c7;'; // Amarillo claro para urgente
+      urgencyPill = ` ${pill(`En ${daysUntilExpiration} días`, '#FFF7ED', '#B45309', '#FDBA74')}`;
     }
 
-    // Agregar fila a la tabla HTML
     movementsTableHtml += `
-      <tr${rowStyle ? ` style="${rowStyle}"` : ''}>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">
-          ${formattedExpirationDate}
-          ${daysUntilExpiration === 0 ? '<strong style="color: #dc2626;"> (HOY)</strong>' : ''}
-          ${daysUntilExpiration === 1 ? '<strong style="color: #ea580c;"> (MAÑANA)</strong>' : ''}
-        </td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${movement.title}</td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${movement.movement}</td>
-        <td style="border: 1px solid #fbbf24; padding: 12px; color: #78350f;">${movement.description || '-'}</td>
-      </tr>`;
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
+        <tr><td style="padding:12px 14px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:13px;font-weight:600;color:#0F172A;">${movement.title}${urgencyPill}</td>
+            <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">Expira ${formattedExpirationDate}</td>
+          </tr></table>
+          <p style="margin:4px 0 0 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${movement.movement || 'Movimiento'}</p>
+          ${movement.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${movement.description}</p>` : ''}
+        </td></tr>
+      </table>`;
 
-    // Agregar al texto plano
     movementsListText += `- ${formattedExpirationDate}`;
     if (daysUntilExpiration === 0) movementsListText += ' (HOY)';
     if (daysUntilExpiration === 1) movementsListText += ' (MAÑANA)';
@@ -64,10 +50,6 @@ function processMovementsData(movements, user) {
       movementsListText += `  ${movement.description}\n`;
     }
   });
-
-  movementsTableHtml += `
-      </tbody>
-    </table>`;
 
   return {
     userName: user.name || user.email || 'Usuario',
