@@ -96,14 +96,14 @@ const TEMPLATES = {
     lede: 'Detectamos {{foldersCount}} carpeta(s) sin actividad reciente que podrían caducar (límite configurado: {{caducityDays}} días de inactividad). Te las listamos para que puedas actuar a tiempo.',
     sectionTitle: 'Carpetas en riesgo de caducidad',
     ctaLabel: 'Ver mis causas',
-    ctaPath: '/apps/folders/list',
+    ctaPath: '/apps/folders/list?source=email_inactividad_cta',
     footerNote: 'Recibís este aviso porque tenés habilitadas las alertas de inactividad. Podés ajustar los umbrales de caducidad y la anticipación desde la configuración de tu cuenta.',
     text: `Hola {{userName}},
 
 Detectamos {{foldersCount}} carpeta(s) sin actividad reciente que podrían caducar (límite: {{caducityDays}} días de inactividad).
 
 {{foldersListText}}
-Ver mis causas: {{process.env.BASE_URL}}/apps/folders/list
+Ver mis causas: {{process.env.BASE_URL}}/apps/folders/list?source=email_inactividad_cta
 {{planBannerText}}{{featureBannerText}}
 Recibís este aviso porque tenés habilitadas las alertas de inactividad.
 
@@ -118,14 +118,14 @@ El equipo de Law||Analytics`
     lede: 'Detectamos {{foldersCount}} carpeta(s) sin actividad reciente que podrían prescribir (límite configurado: {{prescriptionDays}} días de inactividad). Te las listamos para que puedas actuar a tiempo.',
     sectionTitle: 'Carpetas en riesgo de prescripción',
     ctaLabel: 'Ver mis causas',
-    ctaPath: '/apps/folders/list',
+    ctaPath: '/apps/folders/list?source=email_inactividad_cta',
     footerNote: 'Recibís este aviso porque tenés habilitadas las alertas de inactividad. Podés ajustar los umbrales de prescripción y la anticipación desde la configuración de tu cuenta.',
     text: `Hola {{userName}},
 
 Detectamos {{foldersCount}} carpeta(s) sin actividad reciente que podrían prescribir (límite: {{prescriptionDays}} días de inactividad).
 
 {{foldersListText}}
-Ver mis causas: {{process.env.BASE_URL}}/apps/folders/list
+Ver mis causas: {{process.env.BASE_URL}}/apps/folders/list?source=email_inactividad_cta
 {{planBannerText}}{{featureBannerText}}
 Recibís este aviso porque tenés habilitadas las alertas de inactividad.
 

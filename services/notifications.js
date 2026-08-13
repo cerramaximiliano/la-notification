@@ -1421,7 +1421,9 @@ async function sendJudicialMovementNotifications({
         const frontBase = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
         const resolvedFolderIds = Object.values(folderIdByExpediente);
         const singleFolderId = totalExpedientesCount === 1 && resolvedFolderIds.length === 1 ? resolvedFolderIds[0] : null;
-        const ctaUrl = singleFolderId ? `${frontBase}/apps/folders/details/${singleFolderId}` : `${frontBase}/apps/folders/list`;
+        const ctaUrl = singleFolderId
+            ? `${frontBase}/apps/folders/details/${singleFolderId}?source=email_movimiento_cta`
+            : `${frontBase}/apps/folders/list?source=email_movimiento_cta`;
         const ctaLabel = singleFolderId ? 'Ver la causa completa' : 'Ver mis causas';
 
         // Banners compartidos (plan upgrade + feature/anuncio), gobernados por
