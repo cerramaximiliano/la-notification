@@ -103,6 +103,14 @@ const UserPreferencesSchema = new Schema({
       inactivitySettings: {
         type: InactivitySettingsSchema,
         default: () => ({})
+      },
+
+      // Modo de notificación de movimientos judiciales:
+      //   'scheduled' (default): entrega a la hora diaria configurada (p. ej. 19:00)
+      //   'immediate': entrega en la próxima corrida del cron ni bien el
+      //     worker/coordinador descubre el movimiento
+      judicialMovements: {
+        mode: { type: String, enum: ['scheduled', 'immediate'], default: 'scheduled' }
       }
     },
 

@@ -1158,12 +1158,20 @@ async function sendJudicialMovementNotifications({
             };
         }
 
-        // Buscar movimientos judiciales pendientes de notificar
+        // Buscar movimientos judiciales pendientes de notificar.
+        // Modo INMEDIATO (preferencia del usuario): no se espera el notifyAt
+        // programado — todo pending entra en la próxima corrida del cron.
         const now = new Date();
+        const immediateMode = user.preferences?.notifications?.user?.judicialMovements?.mode === 'immediate';
+        const notifyAtFilter = immediateMode ? {} : { 'notificationSettings.notifyAt': { $lte: now } };
+        if (immediateMode) {
+            logger.info(`Usuario ${user.email} en modo de notificación inmediata de movimientos`);
+        }
+
         let pendingMovements = await JudicialMovement.find({
             userId,
             notificationStatus: 'pending',
-            'notificationSettings.notifyAt': { $lte: now }
+            ...notifyAtFilter
         }).sort({ 'movimiento.fecha': -1 });
 
         // Buscar cédulas (notificaciones electrónicas) pendientes del usuario.
@@ -1171,7 +1179,7 @@ async function sendJudicialMovementNotifications({
         const pendingCedulas = await JudicialCedula.find({
             userId,
             notificationStatus: 'pending',
-            'notificationSettings.notifyAt': { $lte: now }
+            ...notifyAtFilter
         }).sort({ 'cedula.fecha': -1 });
 
         // ============================================================

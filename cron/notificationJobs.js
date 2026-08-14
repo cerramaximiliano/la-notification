@@ -782,11 +782,32 @@ async function judicialMovementNotificationJob() {
     // Buscar todos los usuarios que tienen movimientos pendientes de notificar
     logger.info('[NOTIFICACIÓN] Buscando movimientos pendientes de notificar...');
     const now = new Date();
+
+    // Usuarios en modo INMEDIATO: sus pendientes entran en cada corrida del
+    // cron sin esperar el notifyAt programado (la hora diaria es solo para
+    // el modo 'scheduled', que sigue siendo el default).
+    let immediateUserIds = [];
+    try {
+      const immediateUsers = await User.find({
+        'preferences.notifications.user.judicialMovements.mode': 'immediate',
+        isActive: { $ne: false }
+      }).select('_id').lean();
+      immediateUserIds = immediateUsers.map(u => u._id);
+      if (immediateUserIds.length > 0) {
+        logger.info(`[NOTIFICACIÓN] ${immediateUserIds.length} usuario(s) en modo inmediato`);
+      }
+    } catch (immErr) {
+      logger.warn(`[NOTIFICACIÓN] No se pudieron resolver usuarios en modo inmediato: ${immErr.message}`);
+    }
+    const pendingTimeFilter = immediateUserIds.length > 0
+      ? { $or: [{ 'notificationSettings.notifyAt': { $lte: now } }, { userId: { $in: immediateUserIds } }] }
+      : { 'notificationSettings.notifyAt': { $lte: now } };
+
     const pendingMovements = await JudicialMovement.aggregate([
       {
         $match: {
           notificationStatus: 'pending',
-          'notificationSettings.notifyAt': { $lte: now }
+          ...pendingTimeFilter
         }
       },
       {
@@ -877,7 +898,7 @@ async function judicialMovementNotificationJob() {
     // incluye las cédulas del usuario en el mismo envío).
     const movementUserIds = new Set(pendingMovements.map(g => String(g._id)));
     const pendingCedulasByUser = await JudicialCedula.aggregate([
-      { $match: { notificationStatus: 'pending', 'notificationSettings.notifyAt': { $lte: now } } },
+      { $match: { notificationStatus: 'pending', ...pendingTimeFilter } },
       { $group: { _id: '$userId', count: { $sum: 1 } } }
     ]);
     const cedulaOnlyUsers = pendingCedulasByUser.filter(g => !movementUserIds.has(String(g._id)));
