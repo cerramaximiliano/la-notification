@@ -449,11 +449,44 @@ function buildPlanUpgradeBanner(suggestion, frontBaseUrl, promo = null) {
   return { html, text };
 }
 
+/**
+ * Strip compacto "opciones de notificación" para el email de movimientos:
+ * avisa que el usuario puede elegir inmediatas / resumen diario / desactivar,
+ * con CTA a la página de configuración. Config: notificationOptionsBanner
+ * del doc global (enabled + text custom opcional). Marker <!--options-banner-->.
+ *
+ * @param {Object|null} cfg - config.notificationOptionsBanner
+ * @param {string} frontBaseUrl
+ * @returns {{html: string, text: string}}
+ */
+function buildNotificationOptionsBanner(cfg, frontBaseUrl) {
+  if (cfg && cfg.enabled === false) {
+    return { html: '', text: '' };
+  }
+  const texto = (cfg && cfg.text) ||
+    'Elegí cómo recibir estos avisos: al instante, en un resumen diario, o desactivalos cuando quieras.';
+  const url = `${frontBaseUrl || DEFAULT_FRONT_BASE_URL}/apps/profiles/user/settings?source=email_movimiento_opciones`;
+
+  const html = `
+      <!--options-banner--><tr><td class="px-card" style="padding:0 44px 14px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F8FAFC;border:1px solid #E6EAF2;border-radius:8px;">
+          <tr><td style="padding:10px 16px;">
+            <p style="margin:0;font-size:12px;line-height:1.6;color:#64748B;">&#128161; ${texto} <a href="${url}" style="color:#3A7BFF;font-weight:600;text-decoration:none;white-space:nowrap;">Configurar notificaciones&nbsp;&#8594;</a></p>
+          </td></tr>
+        </table>
+      </td></tr>`;
+
+  const text = `\n${texto} Configurar notificaciones: ${url}\n`;
+
+  return { html, text };
+}
+
 module.exports = {
   processTemplate,
   getProcessedTemplate,
   processJudicialMovementsData,
   processJudicialCedulasData,
   buildPlanUpgradeBanner,
+  buildNotificationOptionsBanner,
   sectionHeaderHtml
 };

@@ -344,6 +344,21 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         }
     },
 
+    // Aviso compacto de opciones de notificación en el email de movimientos:
+    // "podés elegir inmediatas / resumen diario / desactivarlas" con CTA a la
+    // página de configuración. Informativo, apagable desde la admin UI.
+    notificationOptionsBanner: {
+        enabled: {
+            type: Boolean,
+            default: true
+        },
+        // Texto custom (null = copy por defecto del sistema)
+        text: {
+            type: String,
+            default: null
+        }
+    },
+
     // Banner de anuncio/feature en los emails de notificación al usuario
     // (todos los tipos). Definido por el admin; por default no se muestra
     // junto al banner de plan para no apilar banners.

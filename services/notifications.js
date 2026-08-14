@@ -1468,6 +1468,11 @@ async function sendJudicialMovementNotifications({
         const { resolveEmailBanners } = require('./emailBanners');
         const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'movimiento' });
 
+        // Strip informativo de opciones de notificación (configurable desde
+        // la admin UI: notificationOptionsBanner). Solo email de movimientos.
+        const { buildNotificationOptionsBanner } = require('./templateProcessor');
+        const optionsBanner = buildNotificationOptionsBanner(notifConfig?.notificationOptionsBanner, frontBase);
+
         const templateVariables = {
             ...movementVars,
             cedulasHtml: cedulaData.cedulasHtml,
@@ -1493,7 +1498,8 @@ async function sendJudicialMovementNotifications({
         // <!--plan-banner--> / <!--feature-banner--> delatan si renderizaron).
         const missingBanners = [
             banners.templateVars.planBannerHtml && !htmlContent.includes('<!--plan-banner-->') ? banners.templateVars.planBannerHtml : null,
-            banners.templateVars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? banners.templateVars.featureBannerHtml : null
+            banners.templateVars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? banners.templateVars.featureBannerHtml : null,
+            optionsBanner.html && !htmlContent.includes('<!--options-banner-->') ? optionsBanner.html : null
         ].filter(Boolean);
         if (missingBanners.length > 0) {
             logger.warn('Template judicial-movements sin slot(s) de banner — inyectando por fallback');
@@ -1507,6 +1513,9 @@ async function sendJudicialMovementNotifications({
         }
         if (banners.templateVars.featureBannerText && !textContent.includes(banners.templateVars.featureBannerText.trim().split('\n')[1] || '@@')) {
             textContent = textContent + banners.templateVars.featureBannerText;
+        }
+        if (optionsBanner.text && !textContent.includes('Configurar notificaciones:')) {
+            textContent = textContent + optionsBanner.text;
         }
 
         logger.info('Usando template de base de datos para movimientos judiciales');
