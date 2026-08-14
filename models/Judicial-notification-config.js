@@ -321,6 +321,12 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             min: 1,
             max: 1000
         },
+        // Tipos de email donde puede aparecer este banner.
+        // Valores: movimiento | calendario | tareas | vencimiento | inactividad
+        emailTypes: {
+            type: [String],
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad']
+        },
         // Plan(es) actuales del usuario a los que NO mostrar el banner
         // (además del tope, que nunca lo recibe porque no hay upgrade)
         excludePlans: {
@@ -352,10 +358,22 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             type: Boolean,
             default: true
         },
-        // Texto custom (null = copy por defecto del sistema)
+        // Texto custom global (null = copy por defecto del sistema)
         text: {
             type: String,
             default: null
+        },
+        // Tipos de email donde puede aparecer este banner.
+        // Valores: movimiento | calendario | tareas | vencimiento | inactividad
+        emailTypes: {
+            type: [String],
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad']
+        },
+        // Texto por tipo de email (pisa `text` para ese tipo).
+        // { movimiento: '...', calendario: '...', ... }
+        textByType: {
+            type: mongoose.Schema.Types.Mixed,
+            default: undefined
         }
     },
 
@@ -383,10 +401,48 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             type: String,
             default: null
         },
+        // Tipos de email donde puede aparecer este banner.
+        // Valores: movimiento | calendario | tareas | vencimiento | inactividad
+        emailTypes: {
+            type: [String],
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad']
+        },
         // Mostrar aunque el email ya lleve el banner de plan
         showWithPlanBanner: {
             type: Boolean,
             default: false
+        }
+    },
+
+    // Política transversal de banners promocionales.
+    bannerPolicy: {
+        // Cooldown COMPARTIDO: como máximo un banner promocional por usuario
+        // cada N días, sin importar cuál (evita que plan y feature se apilen o
+        // se turnen sin descanso). Con enabled=false cada banner usa su propio
+        // criterio (hoy solo el de plan tiene cooldown propio).
+        sharedCooldown: {
+            enabled: {
+                type: Boolean,
+                default: true
+            },
+            days: {
+                type: Number,
+                default: 7,
+                min: 0,
+                max: 90
+            },
+            // Banners que participan del cooldown compartido.
+            // El strip de opciones es informativo: por default NO participa.
+            participants: {
+                type: [String],
+                default: ['plan', 'feature']
+            }
+        },
+        // Orden de prioridad cuando más de un banner es elegible en el mismo
+        // email (el primero que aplique gana bajo cooldown compartido).
+        priority: {
+            type: [String],
+            default: ['plan', 'feature']
         }
     },
 

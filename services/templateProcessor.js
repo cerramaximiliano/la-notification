@@ -459,13 +459,22 @@ function buildPlanUpgradeBanner(suggestion, frontBaseUrl, promo = null) {
  * @param {string} frontBaseUrl
  * @returns {{html: string, text: string}}
  */
-function buildNotificationOptionsBanner(cfg, frontBaseUrl) {
+function buildNotificationOptionsBanner(cfg, frontBaseUrl, sourceEmail = 'movimiento') {
   if (cfg && cfg.enabled === false) {
     return { html: '', text: '' };
   }
-  const texto = (cfg && cfg.text) ||
-    'Elegí cómo recibir estos avisos: al instante, en un resumen diario, o desactivalos cuando quieras.';
-  const url = `${frontBaseUrl || DEFAULT_FRONT_BASE_URL}/apps/profiles/user/settings?source=email_movimiento_opciones`;
+  // Copy por tipo de email: cada uno habla de lo que el usuario acaba de
+  // recibir. textByType[<tipo>] pisa el texto global, que pisa el default.
+  const DEFAULT_TEXT_BY_TYPE = {
+    movimiento: 'Elegí cómo recibir estos avisos: al instante, en un resumen diario, o desactivalos cuando quieras.',
+    calendario: 'Podés elegir con cuántos días de anticipación te avisamos de tus eventos, o desactivar estos recordatorios.',
+    tareas: 'Podés ajustar la anticipación de los recordatorios de tareas o desactivarlos cuando quieras.',
+    vencimiento: 'Podés ajustar con cuánta anticipación te avisamos de los vencimientos, o desactivar estos avisos.',
+    inactividad: 'Podés ajustar los plazos de caducidad y prescripción, o desactivar estas alertas de inactividad.'
+  };
+  const byType = (cfg && cfg.textByType && cfg.textByType[sourceEmail]) || null;
+  const texto = byType || (cfg && cfg.text) || DEFAULT_TEXT_BY_TYPE[sourceEmail] || DEFAULT_TEXT_BY_TYPE.movimiento;
+  const url = `${frontBaseUrl || DEFAULT_FRONT_BASE_URL}/apps/profiles/user/settings?source=email_${sourceEmail}_opciones`;
 
   const html = `
       <!--options-banner--><tr><td class="px-card" style="padding:0 44px 14px 44px;">

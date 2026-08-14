@@ -27,7 +27,9 @@ const EMPTY_VARS = {
   planBannerHtml: '',
   planBannerText: '',
   featureBannerHtml: '',
-  featureBannerText: ''
+  featureBannerText: '',
+  optionsBannerHtml: '',
+  optionsBannerText: ''
 };
 
 /**
@@ -69,6 +71,13 @@ function buildFeatureBanner(cfg, frontBaseUrl, sourceEmail) {
  *   de email para el tracking del CTA (movimiento, calendar, tasks, ...)
  * @returns {{ templateVars: Object, planBannerShown: boolean, recordIfShown: Function }}
  */
+/** ¿Este banner puede aparecer en este tipo de email? (config emailTypes) */
+function allowedForType(cfg, sourceEmail) {
+  const types = cfg && Array.isArray(cfg.emailTypes) ? cfg.emailTypes : null;
+  if (!types || types.length === 0) return true; // sin restricción configurada
+  return types.includes(sourceEmail);
+}
+
 async function resolveEmailBanners(userId, user, options = {}) {
   const sourceEmail = options.sourceEmail || 'notificacion';
   const frontBase = process.env.FRONT_BASE_URL || DEFAULT_FRONT_BASE_URL;
@@ -76,6 +85,7 @@ async function resolveEmailBanners(userId, user, options = {}) {
   const result = {
     templateVars: { ...EMPTY_VARS },
     planBannerShown: false,
+    featureBannerShown: false,
     recordIfShown: async () => {}
   };
 
@@ -92,7 +102,26 @@ async function resolveEmailBanners(userId, user, options = {}) {
   try {
     const { Folder, PlanBannerSend } = require('../models');
     const bannerCfg = (notifConfig && notifConfig.planBanner) || {};
-    if (bannerCfg.enabled !== false) {
+    const policyCfg = (notifConfig && notifConfig.bannerPolicy) || {};
+    const sharedCooldown = policyCfg.sharedCooldown || {};
+    const sharedParticipants = Array.isArray(sharedCooldown.participants) ? sharedCooldown.participants : ['plan', 'feature'];
+    const sharedEnabled = sharedCooldown.enabled !== false && sharedParticipants.length > 0;
+    // Cooldown compartido: si YA se mostró cualquier banner participante en la
+    // ventana, ninguno de los participantes vuelve a mostrarse.
+    let sharedBlocked = false;
+    if (sharedEnabled) {
+      const days = Number.isFinite(sharedCooldown.days) ? sharedCooldown.days : 7;
+      if (days > 0) {
+        const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+        sharedBlocked = Boolean(await PlanBannerSend.exists({
+          userId,
+          sentAt: { $gte: since },
+          bannerKind: { $in: sharedParticipants }
+        }));
+      }
+    }
+    const planParticipates = sharedEnabled && sharedParticipants.includes('plan');
+    if (bannerCfg.enabled !== false && allowedForType(bannerCfg, sourceEmail) && !(planParticipates && sharedBlocked)) {
       const archivedCount = await Folder.countDocuments({ userId, archived: true });
       const minArchived = Number.isFinite(bannerCfg.minArchivedFolders) ? bannerCfg.minArchivedFolders : 1;
       if (archivedCount >= minArchived) {
@@ -118,6 +147,8 @@ async function resolveEmailBanners(userId, user, options = {}) {
             result.templateVars.planBannerText = banner.text;
             result.planBannerShown = true;
             planBannerMeta = {
+              bannerKind: 'plan',
+              emailType: sourceEmail,
               suggestedPlanId: suggestion.suggested.planId,
               archivedCount,
               promoCode: promo ? promo.code : null
@@ -132,26 +163,75 @@ async function resolveEmailBanners(userId, user, options = {}) {
   }
 
   // ---- Feature banner (anuncio del admin) ----
+  let featureBannerMeta = null;
   try {
     const featureCfg = (notifConfig && notifConfig.featureBanner) || {};
-    const suppressed = result.planBannerShown && featureCfg.showWithPlanBanner !== true;
-    if (!suppressed) {
+    const policyCfg2 = (notifConfig && notifConfig.bannerPolicy) || {};
+    const shared2 = policyCfg2.sharedCooldown || {};
+    const participants2 = Array.isArray(shared2.participants) ? shared2.participants : ['plan', 'feature'];
+    const featureParticipates = shared2.enabled !== false && participants2.includes('feature');
+
+    // Bloqueos: (a) ya va el de plan en este email (salvo showWithPlanBanner),
+    // (b) tipo de email no habilitado, (c) cooldown compartido consumido.
+    const suppressedByPlan = result.planBannerShown && featureCfg.showWithPlanBanner !== true;
+    let sharedBlockedFeature = false;
+    if (featureParticipates && !result.planBannerShown) {
+      const days2 = Number.isFinite(shared2.days) ? shared2.days : 7;
+      if (days2 > 0) {
+        const { PlanBannerSend } = require('../models');
+        const since2 = new Date(Date.now() - days2 * 24 * 3600 * 1000);
+        sharedBlockedFeature = Boolean(await PlanBannerSend.exists({
+          userId,
+          sentAt: { $gte: since2 },
+          bannerKind: { $in: participants2 }
+        }));
+      }
+    } else if (featureParticipates && result.planBannerShown) {
+      // El de plan ya ocupa la ventana compartida de este envío.
+      sharedBlockedFeature = true;
+    }
+
+    if (!suppressedByPlan && !sharedBlockedFeature && allowedForType(featureCfg, sourceEmail)) {
       const feature = buildFeatureBanner(featureCfg, frontBase, sourceEmail);
       result.templateVars.featureBannerHtml = feature.html;
       result.templateVars.featureBannerText = feature.text;
+      if (feature.html) {
+        result.featureBannerShown = true;
+        if (featureParticipates) {
+          featureBannerMeta = { bannerKind: 'feature', emailType: sourceEmail };
+        }
+      }
     }
   } catch (err) {
     logger.warn(`[EmailBanners] No se pudo armar el feature banner: ${err.message}`);
   }
 
+  // Strip informativo de opciones de notificación (no participa del cooldown
+  // por default: es ayuda de configuración, no promoción).
+  try {
+    const optionsCfg = (notifConfig && notifConfig.notificationOptionsBanner) || {};
+    const participantsOpt = Array.isArray(((notifConfig || {}).bannerPolicy || {}).sharedCooldown?.participants)
+      ? notifConfig.bannerPolicy.sharedCooldown.participants
+      : ['plan', 'feature'];
+    if (optionsCfg.enabled !== false && allowedForType(optionsCfg, sourceEmail) && !participantsOpt.includes('options')) {
+      const { buildNotificationOptionsBanner } = require('./templateProcessor');
+      const opts = buildNotificationOptionsBanner(optionsCfg, frontBase, sourceEmail);
+      result.templateVars.optionsBannerHtml = opts.html;
+      result.templateVars.optionsBannerText = opts.text;
+    }
+  } catch (err) {
+    logger.warn(`[EmailBanners] No se pudo armar el strip de opciones: ${err.message}`);
+  }
+
   // ---- Registro para el cooldown (llamar tras el envío exitoso) ----
-  if (planBannerMeta) {
+  const metaToRecord = planBannerMeta || featureBannerMeta;
+  if (metaToRecord) {
     result.recordIfShown = async () => {
       try {
         const { PlanBannerSend } = require('../models');
-        await PlanBannerSend.create({ userId, ...planBannerMeta });
+        await PlanBannerSend.create({ userId, ...metaToRecord });
       } catch (err) {
-        logger.warn(`[EmailBanners] No se pudo registrar plan-banner-send para ${userId}: ${err.message}`);
+        logger.warn(`[EmailBanners] No se pudo registrar banner-send para ${userId}: ${err.message}`);
       }
     };
   }
@@ -168,7 +248,8 @@ function applyBannerFallback(htmlContent, textContent, banners) {
   const vars = banners.templateVars || EMPTY_VARS;
   const missing = [
     vars.planBannerHtml && !htmlContent.includes('<!--plan-banner-->') ? vars.planBannerHtml : null,
-    vars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? vars.featureBannerHtml : null
+    vars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? vars.featureBannerHtml : null,
+    vars.optionsBannerHtml && !htmlContent.includes('<!--options-banner-->') ? vars.optionsBannerHtml : null
   ].filter(Boolean);
 
   if (missing.length > 0) {
@@ -183,6 +264,9 @@ function applyBannerFallback(htmlContent, textContent, banners) {
   const featureTitleLine = vars.featureBannerText ? (vars.featureBannerText.trim().split('\n')[1] || null) : null;
   if (vars.featureBannerText && featureTitleLine && !textContent.includes(featureTitleLine)) {
     textContent = textContent + vars.featureBannerText;
+  }
+  if (vars.optionsBannerText && !textContent.includes('Configurar notificaciones:')) {
+    textContent = textContent + vars.optionsBannerText;
   }
   return { htmlContent, textContent };
 }

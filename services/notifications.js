@@ -1468,10 +1468,6 @@ async function sendJudicialMovementNotifications({
         const { resolveEmailBanners } = require('./emailBanners');
         const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'movimiento' });
 
-        // Strip informativo de opciones de notificación (configurable desde
-        // la admin UI: notificationOptionsBanner). Solo email de movimientos.
-        const { buildNotificationOptionsBanner } = require('./templateProcessor');
-        const optionsBanner = buildNotificationOptionsBanner(notifConfig?.notificationOptionsBanner, frontBase);
 
         const templateVariables = {
             ...movementVars,
@@ -1485,9 +1481,7 @@ async function sendJudicialMovementNotifications({
             movimientosHeaderText,
             ctaUrl,
             ctaLabel,
-            ...banners.templateVars,
-            optionsBannerHtml: optionsBanner.html,
-            optionsBannerText: optionsBanner.text
+            ...banners.templateVars
         };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
 
@@ -1498,27 +1492,10 @@ async function sendJudicialMovementNotifications({
         // Resiliencia: si una edición del template borró los slots de banners,
         // se inyectan igual antes del cierre del body (los marcadores
         // <!--plan-banner--> / <!--feature-banner--> delatan si renderizaron).
-        const missingBanners = [
-            banners.templateVars.planBannerHtml && !htmlContent.includes('<!--plan-banner-->') ? banners.templateVars.planBannerHtml : null,
-            banners.templateVars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? banners.templateVars.featureBannerHtml : null,
-            optionsBanner.html && !htmlContent.includes('<!--options-banner-->') ? optionsBanner.html : null
-        ].filter(Boolean);
-        if (missingBanners.length > 0) {
-            logger.warn('Template judicial-movements sin slot(s) de banner — inyectando por fallback');
-            const bannerBlock = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;">${missingBanners.join('')}</table>`;
-            htmlContent = /<\/body>/i.test(htmlContent)
-                ? htmlContent.replace(/<\/body>/i, `${bannerBlock}</body>`)
-                : htmlContent + bannerBlock;
-        }
-        if (banners.templateVars.planBannerText && !textContent.includes('Mejorar mi plan:')) {
-            textContent = textContent + banners.templateVars.planBannerText;
-        }
-        if (banners.templateVars.featureBannerText && !textContent.includes(banners.templateVars.featureBannerText.trim().split('\n')[1] || '@@')) {
-            textContent = textContent + banners.templateVars.featureBannerText;
-        }
-        if (optionsBanner.text && !textContent.includes('Configurar notificaciones:')) {
-            textContent = textContent + optionsBanner.text;
-        }
+        const { applyBannerFallback } = require('./emailBanners');
+        const adjustedMov = applyBannerFallback(htmlContent, textContent, banners);
+        htmlContent = adjustedMov.htmlContent;
+        textContent = adjustedMov.textContent;
 
         logger.info('Usando template de base de datos para movimientos judiciales');
 

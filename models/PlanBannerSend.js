@@ -17,6 +17,15 @@ const planBannerSendSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  // Tipo de banner mostrado: 'plan' | 'feature' (habilita el cooldown
+  // compartido entre banners promocionales).
+  bannerKind: {
+    type: String,
+    default: 'plan',
+    index: true
+  },
+  // Tipo de email donde se mostró (movimiento, calendario, tareas, ...)
+  emailType: String,
   // Contexto para métricas (qué se sugirió y con cuántas archivadas)
   suggestedPlanId: String,
   archivedCount: Number,
