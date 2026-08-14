@@ -5,7 +5,7 @@ const logger = require("../config/logger");
 // Función para enviar correos electrónicos
 const sendEmail = async (to, subject, htmlBody, textBody) => {
   const params = {
-    Source: "soporte@lawanalytics.app", // Correo verificado en AWS SES
+    Source: "Law||Analytics <soporte@lawanalytics.app>", // Correo verificado en AWS SES
     Destination: {
       ToAddresses: [to],
     },
