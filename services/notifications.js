@@ -1485,7 +1485,9 @@ async function sendJudicialMovementNotifications({
             movimientosHeaderText,
             ctaUrl,
             ctaLabel,
-            ...banners.templateVars
+            ...banners.templateVars,
+            optionsBannerHtml: optionsBanner.html,
+            optionsBannerText: optionsBanner.text
         };
         const processedTemplate = await getProcessedTemplate('notification', 'judicial-movements', templateVariables);
 
