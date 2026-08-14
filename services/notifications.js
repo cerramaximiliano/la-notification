@@ -1987,10 +1987,132 @@ async function sendFolderInactivityNotifications({
     }
 }
 
+/**
+ * Envía la notificación de un envío postal (Correo Argentino).
+ *
+ * A diferencia de los movimientos judiciales, estos avisos son INMEDIATOS:
+ * el webhook llama a esta función en el acto. El template sale de la base
+ * (`notification/postal-tracking-update`) con fallback al shell en código.
+ *
+ * @param {Object} params
+ * @param {Object} params.notification - doc PostalNotification
+ * @returns {Object} { success, sent, message }
+ */
+async function sendPostalNotification({ notification }) {
+    const { PostalNotification } = require('../models');
+    const { processPostalData, buildFallbackHtml, buildFallbackText } = require('./postalTemplateProcessor');
+    const { resolveEmailBanners, applyBannerFallback } = require('./emailBanners');
+    const policyService = require('./notificationPolicyService');
+
+    const marcar = async (estado, detalle) => {
+        try {
+            notification.notificationStatus = estado;
+            if (!Array.isArray(notification.notifications)) notification.notifications = [];
+            notification.notifications.push({
+                date: new Date(),
+                type: estado === 'sent' ? 'email' : 'system',
+                success: estado === 'sent',
+                details: detalle
+            });
+            await notification.save();
+        } catch (err) {
+            logger.error(`No se pudo actualizar PostalNotification ${notification._id}: ${err.message}`);
+        }
+    };
+
+    try {
+        const userId = notification.userId;
+        const user = await User.findById(userId);
+
+        if (!user) {
+            await marcar('failed', 'Usuario no encontrado');
+            return { success: false, sent: false, message: 'Usuario no encontrado' };
+        }
+        if (user.isActive === false) {
+            await marcar('skipped', 'Usuario desactivado');
+            return { success: true, sent: false, message: 'Usuario desactivado' };
+        }
+
+        // Preferencias: canal email + switch propio de seguimiento postal
+        const prefs = user.preferences?.notifications || {};
+        const emailEnabled = prefs.channels && prefs.channels.email !== false;
+        if (!emailEnabled) {
+            await marcar('skipped', 'Canal email deshabilitado por el usuario');
+            return { success: true, sent: false, message: 'Email deshabilitado' };
+        }
+        if (prefs.user?.postalTracking?.enabled === false) {
+            await marcar('skipped', 'Notificaciones de seguimiento postal desactivadas por el usuario');
+            return { success: true, sent: false, message: 'Postal desactivado por preferencia' };
+        }
+
+        // Kill-switch central + gate de la sección postalNotifications
+        const notifConfig = await policyService.getConfigCached();
+        if (!policyService.isGloballyEnabled(notifConfig)) {
+            return { success: true, sent: false, message: 'Notificaciones deshabilitadas globalmente' };
+        }
+        if (notifConfig?.postalNotifications?.enabled === false) {
+            await marcar('skipped', 'Notificaciones postales deshabilitadas en la configuración');
+            return { success: true, sent: false, message: 'Postal deshabilitado por configuración' };
+        }
+
+        const frontBase = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
+        const vars = processPostalData(notification, user, { frontBaseUrl: frontBase });
+        const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'postal' });
+        const templateVariables = { ...vars, ...banners.templateVars };
+
+        // Template de la base con FALLBACK al shell en código.
+        let subject;
+        let htmlContent;
+        let textContent;
+        try {
+            const processed = await getProcessedTemplate('notification', 'postal-tracking-update', templateVariables);
+            if (!processed.html || processed.html.trim().length === 0) {
+                throw new Error('Template vacío');
+            }
+            subject = processed.subject;
+            htmlContent = processed.html;
+            textContent = processed.text;
+        } catch (tplError) {
+            logger.warn(`Template postal-tracking-update no disponible (${tplError.message}) — usando fallback en código`);
+            subject = `Law||Analytics: ${vars.eventsCount} novedad(es) en tu envío ${vars.trackingCode}`;
+            htmlContent = buildFallbackHtml(vars, banners.templateVars);
+            textContent = buildFallbackText(vars, banners.templateVars);
+        }
+
+        const adjusted = applyBannerFallback(htmlContent, textContent, banners);
+
+        await sendEmail(user.email, subject, adjusted.htmlContent, adjusted.textContent);
+        await banners.recordIfShown();
+        await marcar('sent', `Notificación postal enviada a ${user.email} (${vars.eventsCount} evento/s)`);
+
+        try {
+            await NotificationLog.createFromEntity('custom', notification, {
+                method: 'email',
+                status: 'sent',
+                content: { subject, message: adjusted.htmlContent, template: 'postal-tracking-update' },
+                delivery: { recipientEmail: user.email },
+                metadata: { source: notification.source || 'webhook', trackingCode: vars.trackingCode },
+                sentAt: new Date()
+            }, user._id);
+        } catch (logErr) {
+            logger.warn(`No se pudo registrar NotificationLog postal: ${logErr.message}`);
+        }
+
+        logger.info(`Notificación postal enviada a ${user.email}: ${vars.eventsCount} evento(s) del envío ${vars.trackingCode}`);
+        return { success: true, sent: true, message: 'Notificación enviada' };
+
+    } catch (error) {
+        logger.error(`Error enviando notificación postal: ${error.message}`);
+        await marcar('failed', `Error: ${error.message}`);
+        return { success: false, sent: false, message: error.message };
+    }
+}
+
 module.exports = {
     sendCalendarNotifications,
     sendTaskNotifications,
     sendMovementNotifications,
     sendJudicialMovementNotifications,
     sendFolderInactivityNotifications,
+    sendPostalNotification,
 };

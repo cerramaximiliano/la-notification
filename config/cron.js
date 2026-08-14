@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const {
   calendarNotificationJob,
+  postalSafeGuardJob,
   taskNotificationJob,
   movementNotificationJob,
   clearLogsJob,
@@ -136,6 +137,28 @@ function setupCronJobs() {
         logger.info('Trabajo de notificaciones de movimientos judiciales completado');
       } catch (error) {
         logger.error(`Error en trabajo de notificaciones judiciales: ${error.message}`);
+      }
+    }, {
+      scheduled: true,
+      timezone: 'America/Argentina/Buenos_Aires'
+    });
+  }
+
+  // Safe guard diario de notificaciones postales (8:00 ART): reintenta los
+  // envíos fallidos del webhook y barre postal-trackings por eventos que
+  // nunca se notificaron (worker caído, red, deploy).
+  const postalSafeGuardCron = process.env.NOTIFICATION_POSTAL_SAFEGUARD_CRON || '0 8 * * *';
+
+  if (!cron.validate(postalSafeGuardCron)) {
+    logger.error(`Expresión cron inválida para el safe guard postal: ${postalSafeGuardCron}`);
+  } else {
+    logger.info(`Configurando safe guard de notificaciones postales: ${postalSafeGuardCron}`);
+    cron.schedule(postalSafeGuardCron, async () => {
+      logger.info('Ejecutando safe guard de notificaciones postales');
+      try {
+        await postalSafeGuardJob();
+      } catch (error) {
+        logger.error(`Error en safe guard postal: ${error.message}`);
       }
     }, {
       scheduled: true,

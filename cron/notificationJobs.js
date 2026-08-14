@@ -12,6 +12,7 @@ const {
 } = require('../services/notifications');
 const { coordinateJudicialMovements } = require('../services/judicialMovementCoordinator');
 const { coordinateJudicialCedulas } = require('../services/judicialCedulaCoordinator');
+const { runPostalSafeGuard } = require('../services/postalCoordinator');
 
 
 
@@ -1147,8 +1148,26 @@ async function folderInactivityNotificationJob() {
   }
 }
 
+/**
+ * Safe guard diario de notificaciones postales: reintenta lo que falló por
+ * webhook y barre postal-trackings buscando eventos sin notificar.
+ */
+async function postalSafeGuardJob() {
+  try {
+    logger.info('Iniciando safe guard de notificaciones postales');
+    const { PostalNotification } = require('../models');
+    const stats = await runPostalSafeGuard({ models: { PostalNotification } });
+    logger.info(`Safe guard postal completado: ${JSON.stringify(stats)}`);
+    return stats;
+  } catch (error) {
+    logger.error(`Error en safe guard postal: ${error.message}`);
+    return { errores: 1, error: error.message };
+  }
+}
+
 module.exports = {
   calendarNotificationJob,
+  postalSafeGuardJob,
   taskNotificationJob,
   movementNotificationJob,
   clearLogsJob,

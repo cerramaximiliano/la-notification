@@ -99,6 +99,10 @@ const initializeApp = async () => {
         const systemStatusRoutes = require('./routes/systemStatus');
         app.use('/api/system-status', systemStatusRoutes);
 
+        // Seguimiento postal (Correo Argentino) — webhook de envío inmediato
+        const postalTrackingRoutes = require('./routes/postalTracking');
+        app.use('/api/postal-tracking', postalTrackingRoutes);
+
         // Exportar io globalmente antes de configurar WebSocket
         global.io = io;
         

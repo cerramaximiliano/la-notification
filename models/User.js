@@ -105,6 +105,11 @@ const UserPreferencesSchema = new Schema({
         default: () => ({})
       },
 
+      // Notificaciones de seguimiento postal (Correo Argentino). Son
+      // inmediatas: no tienen modo de agrupación.
+      postalTracking: {
+        enabled: { type: Boolean, default: true }
+      },
       // Modo de notificación de movimientos judiciales:
       //   'scheduled' (default): entrega a la hora diaria configurada (p. ej. 19:00)
       //   'immediate': entrega en la próxima corrida del cron ni bien el

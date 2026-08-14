@@ -15,6 +15,7 @@ const JudicialCedula = require('./JudicialCedula');
 const EmailTemplate = require('./EmailTemplate');
 const Folder = require('./Folder');
 const PlanBannerSend = require('./PlanBannerSend');
+const PostalNotification = require('./PostalNotification');
 
 // Exportar todos los modelos
 module.exports = {
@@ -28,5 +29,6 @@ module.exports = {
   JudicialCedula,
   EmailTemplate,
   Folder,
-  PlanBannerSend
+  PlanBannerSend,
+  PostalNotification
 };

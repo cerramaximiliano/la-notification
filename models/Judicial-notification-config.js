@@ -325,7 +325,7 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         // Valores: movimiento | calendario | tareas | vencimiento | inactividad
         emailTypes: {
             type: [String],
-            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad']
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad', 'postal']
         },
         // Plan(es) actuales del usuario a los que NO mostrar el banner
         // (además del tope, que nunca lo recibe porque no hay upgrade)
@@ -367,13 +367,28 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         // Valores: movimiento | calendario | tareas | vencimiento | inactividad
         emailTypes: {
             type: [String],
-            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad']
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad', 'postal']
         },
         // Texto por tipo de email (pisa `text` para ese tipo).
         // { movimiento: '...', calendario: '...', ... }
         textByType: {
             type: mongoose.Schema.Types.Mixed,
             default: undefined
+        }
+    },
+
+    // Notificaciones de seguimiento postal (Correo Argentino).
+    // El envío es inmediato vía webhook; el safe guard diario recupera los
+    // fallidos y los eventos que nunca llegaron al webhook.
+    postalNotifications: {
+        enabled: {
+            type: Boolean,
+            default: true
+        },
+        // Barrido diario de recuperación (hora en NOTIFICATION_POSTAL_SAFEGUARD_CRON)
+        safeGuardEnabled: {
+            type: Boolean,
+            default: true
         }
     },
 
@@ -405,7 +420,7 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         // Valores: movimiento | calendario | tareas | vencimiento | inactividad
         emailTypes: {
             type: [String],
-            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad']
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad', 'postal']
         },
         // Mostrar aunque el email ya lleve el banner de plan
         showWithPlanBanner: {

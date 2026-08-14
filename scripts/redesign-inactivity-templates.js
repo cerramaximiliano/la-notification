@@ -42,12 +42,14 @@ body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helve
 <tr><td class="px-outer" align="center" style="padding:32px 24px;">
 <table role="presentation" class="wrap" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
   <tr><td style="padding:0 0 18px 0;">
-    <p style="margin:0; font-size:15px; font-weight:700; letter-spacing:-0.2px; color:#0F172A;">Law<span style="color:#3A7BFF;">||</span>Analytics</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="left" style="vertical-align:middle;"><img src="https://res.cloudinary.com/dqyoeolib/image/upload/v1746261520/gzemrcj26etf5n6t1dmw.png" width="148" height="auto" alt="Law||Analytics" style="display:block;max-width:148px;height:auto;border:0;"/></td>
+      <td align="right" style="vertical-align:middle;font-size:12px;color:#3A7BFF;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">${eyebrow}</td>
+    </tr></table>
   </td></tr>
   <tr><td style="background-color:#FFFFFF; border:1px solid #E6EAF2; border-radius:14px; overflow:hidden;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr><td class="px-card" style="padding:36px 44px 8px 44px;">
-        <p style="margin:0 0 10px 0; font-size:12px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:#B45309;">${eyebrow}</p>
         <h1 class="h1-display" style="margin:0 0 18px 0; font-size:30px; line-height:1.16; letter-spacing:-0.5px; font-weight:600; color:#0F172A;">${titulo}</h1>
         <p style="margin:0 0 6px 0; font-size:16px; line-height:1.6; color:#334155;">Hola {{userName}},</p>
         <p style="margin:0 0 8px 0; font-size:16px; line-height:1.6; color:#334155;">${lede}</p>
