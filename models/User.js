@@ -110,6 +110,9 @@ const UserPreferencesSchema = new Schema({
       //   'immediate': entrega en la próxima corrida del cron ni bien el
       //     worker/coordinador descubre el movimiento
       judicialMovements: {
+        // Switch general de las notificaciones de movimientos (las cédulas
+        // NO dependen de este flag: son notificaciones legales personales).
+        enabled: { type: Boolean, default: true },
         mode: { type: String, enum: ['scheduled', 'immediate'], default: 'scheduled' }
       }
     },

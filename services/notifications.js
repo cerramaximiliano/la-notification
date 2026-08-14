@@ -1162,7 +1162,9 @@ async function sendJudicialMovementNotifications({
         // Modo INMEDIATO (preferencia del usuario): no se espera el notifyAt
         // programado — todo pending entra en la próxima corrida del cron.
         const now = new Date();
-        const immediateMode = user.preferences?.notifications?.user?.judicialMovements?.mode === 'immediate';
+        const jmPrefs = user.preferences?.notifications?.user?.judicialMovements || {};
+        const immediateMode = jmPrefs.mode === 'immediate';
+        const movementsDisabled = jmPrefs.enabled === false;
         const notifyAtFilter = immediateMode ? {} : { 'notificationSettings.notifyAt': { $lte: now } };
         if (immediateMode) {
             logger.info(`Usuario ${user.email} en modo de notificación inmediata de movimientos`);
@@ -1173,6 +1175,32 @@ async function sendJudicialMovementNotifications({
             notificationStatus: 'pending',
             ...notifyAtFilter
         }).sort({ 'movimiento.fecha': -1 });
+
+        // Preferencia del usuario: movimientos DESACTIVADOS → se marcan como
+        // skipped (terminal, con motivo) y el email solo lleva cédulas si hay.
+        // Las cédulas no dependen de este flag (notificación legal personal).
+        if (movementsDisabled && pendingMovements.length > 0) {
+            logger.info(`Usuario ${user.email} tiene las notificaciones de movimientos desactivadas — ${pendingMovements.length} movimientos a skipped`);
+            try {
+                await JudicialMovement.updateMany(
+                    { _id: { $in: pendingMovements.map(m => m._id) } },
+                    {
+                        $set: { notificationStatus: 'skipped' },
+                        $push: {
+                            notifications: {
+                                date: new Date(),
+                                type: 'system',
+                                success: false,
+                                details: 'Notificaciones de movimientos desactivadas por preferencia del usuario'
+                            }
+                        }
+                    }
+                );
+            } catch (skipErr) {
+                logger.error(`Error marcando movimientos skipped por preferencia: ${skipErr.message}`);
+            }
+            pendingMovements = [];
+        }
 
         // Buscar cédulas (notificaciones electrónicas) pendientes del usuario.
         // Van en el MISMO email, en una sección "Notificaciones" arriba de los movimientos.
