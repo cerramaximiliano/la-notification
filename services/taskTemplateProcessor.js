@@ -1,4 +1,5 @@
 const moment = require('moment');
+const { esc } = require('./htmlEscape');
 
 // Pill chica estilo unificado (mismo lenguaje visual que el email de movimientos)
 function pill(text, bg, color, border) {
@@ -63,10 +64,10 @@ function processTasksData(tasks, user) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
         <tr><td style="padding:12px 14px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td style="font-size:13px;font-weight:600;color:#0F172A;">${task.name}</td>
+            <td style="font-size:13px;font-weight:600;color:#0F172A;">${esc(task.name)}</td>
             <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">Vence ${formattedDate}</td>
           </tr></table>
-          ${task.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${task.description}</p>` : ''}
+          ${task.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${esc(task.description)}</p>` : ''}
           <p style="margin:8px 0 0 0;">${priorityPill(task.priority)} ${pill(statusText, '#EFF4FF', '#3A7BFF', '#C7D8FF')}</p>
         </td></tr>
       </table>`;

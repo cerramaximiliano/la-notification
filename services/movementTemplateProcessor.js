@@ -1,4 +1,5 @@
 const moment = require('moment');
+const { esc } = require('./htmlEscape');
 
 // Pill chica estilo unificado (mismo lenguaje visual que el email de movimientos)
 function pill(text, bg, color, border) {
@@ -34,11 +35,11 @@ function processMovementsData(movements, user) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
         <tr><td style="padding:12px 14px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td style="font-size:13px;font-weight:600;color:#0F172A;">${movement.title}${urgencyPill}</td>
+            <td style="font-size:13px;font-weight:600;color:#0F172A;">${esc(movement.title)}${urgencyPill}</td>
             <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">Expira ${formattedExpirationDate}</td>
           </tr></table>
-          <p style="margin:4px 0 0 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${movement.movement || 'Movimiento'}</p>
-          ${movement.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${movement.description}</p>` : ''}
+          <p style="margin:4px 0 0 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${esc(movement.movement || 'Movimiento')}</p>
+          ${movement.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${esc(movement.description)}</p>` : ''}
         </td></tr>
       </table>`;
 

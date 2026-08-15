@@ -1,4 +1,5 @@
 const moment = require('moment');
+const { esc } = require('./htmlEscape');
 
 /**
  * Obtiene la fecha de referencia para calcular inactividad de un folder
@@ -93,10 +94,10 @@ function buildFolderCards(folders, settings, kind) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
         <tr><td style="padding:12px 14px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td style="font-size:13px;font-weight:600;color:#0F172A;">${folder.folderName}</td>
+            <td style="font-size:13px;font-weight:600;color:#0F172A;">${esc(folder.folderName)}</td>
             <td align="right" style="white-space:nowrap;">${urgencyPill}</td>
           </tr></table>
-          ${folder.materia ? `<p style="margin:4px 0 0 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${folder.materia}</p>` : ''}
+          ${folder.materia ? `<p style="margin:4px 0 0 0;font-size:11px;color:#3A7BFF;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">${esc(folder.materia)}</p>` : ''}
           <p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">Última actividad: <b>${formattedLastActivity}</b> &nbsp;·&nbsp; ${limitLabel}: <b>${formattedLimitDate}</b></p>
         </td></tr>
       </table>`;

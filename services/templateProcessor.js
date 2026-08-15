@@ -1,6 +1,7 @@
 const { EmailTemplate } = require('../models');
 const logger = require('../config/logger');
 const { signMovementToken } = require('../utils/movementLinkToken');
+const { esc } = require('./htmlEscape');
 
 // URL base del front para los links /m/:token (override por opts/env; default
 // al dominio de prod). El FLAG de rollout NO vive acá: viene del config doc
@@ -215,8 +216,8 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
       
       movimientosRows += processTemplate(movimientoRowTemplate, {
         fecha,
-        tipo: movement.movimiento.tipo,
-        detalle: movement.movimiento.detalle,
+        tipo: esc(movement.movimiento.tipo),
+        detalle: esc(movement.movimiento.detalle),
         urlHtml
       });
       
@@ -244,8 +245,8 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
       number: expediente.number,
       year: expediente.year,
       numberYear,
-      fuero: expediente.fuero,
-      caratula: expediente.caratula,
+      fuero: esc(expediente.fuero),
+      caratula: esc(expediente.caratula),
       folderChipHtml: folderChip(folderInfo),
       movimientosRows,
       folderCtaHtml
@@ -361,7 +362,7 @@ function processJudicialCedulasData(cedulasByExpediente) {
       if (c.cedula && c.cedula.oficina) partes.push(c.cedula.oficina);
       const detalle = partes.join(' — ') || 'Cédula recibida';
 
-      cedulasRows += processTemplate(cedulaRowTemplate, { fecha, tipo, detalle });
+      cedulasRows += processTemplate(cedulaRowTemplate, { fecha, tipo: esc(tipo), detalle: esc(detalle) });
       cedulasText += `- ${fecha}: ${tipo} - ${detalle}\n`;
     });
 
@@ -371,8 +372,8 @@ function processJudicialCedulasData(cedulasByExpediente) {
 
     cedulasHtml += processTemplate(expedienteTemplate, {
       numberYear,
-      fuero: expediente.fuero,
-      caratula: expediente.caratula,
+      fuero: esc(expediente.fuero),
+      caratula: esc(expediente.caratula),
       cedulasRows
     });
 

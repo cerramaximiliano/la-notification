@@ -103,6 +103,10 @@ const initializeApp = async () => {
         const postalTrackingRoutes = require('./routes/postalTracking');
         app.use('/api/postal-tracking', postalTrackingRoutes);
 
+        // Eventos del ecosistema (apps MCP conectadas, etc.)
+        const eventRoutes = require('./routes/events');
+        app.use('/api/events', eventRoutes);
+
         // Exportar io globalmente antes de configurar WebSocket
         global.io = io;
         

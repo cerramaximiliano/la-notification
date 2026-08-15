@@ -2141,6 +2141,110 @@ async function sendPostalNotification({ notification }) {
     }
 }
 
+/**
+ * Aviso de seguridad: el usuario conectó una aplicación externa (MCP) a su
+ * cuenta vía OAuth. Lo dispara law-analytics-server al aceptar el consent.
+ *
+ * Sin cooldown ni preferencia de canal: es un aviso de seguridad de la cuenta,
+ * como el de inicio de sesión — el usuario debe enterarse siempre.
+ *
+ * @returns {Object} { success, sent, message }
+ */
+async function sendMcpAppConnectedNotification({ userId, userEmail, clientName, clientId, connectedAt, ip, userAgent, revokeUrl }) {
+    const { esc } = require('./htmlEscape');
+    try {
+        const user = userId
+            ? await User.findById(userId)
+            : await User.findOne({ email: userEmail });
+
+        if (!user) {
+            logger.warn(`[MCP] Usuario no encontrado (id=${userId} email=${userEmail})`);
+            return { success: false, sent: false, message: 'Usuario no encontrado' };
+        }
+        if (user.isActive === false) {
+            return { success: true, sent: false, message: 'Usuario desactivado' };
+        }
+
+        const frontBase = process.env.FRONT_BASE_URL || 'https://www.lawanalytics.app';
+        const app = esc(clientName || clientId || 'Aplicación externa');
+        const fecha = connectedAt
+            ? moment(connectedAt).tz ? moment(connectedAt).tz('America/Argentina/Buenos_Aires').format('DD/MM/YYYY HH:mm') : moment(connectedAt).format('DD/MM/YYYY HH:mm')
+            : moment().format('DD/MM/YYYY HH:mm');
+        const gestionUrl = revokeUrl || `${frontBase}/settings/connected-apps`;
+
+        // Detalle de la conexión (solo lo que aporta al usuario para reconocerla)
+        const detalles = [
+            ['Aplicación', app],
+            ['Fecha', esc(fecha)],
+            ip ? ['Dirección IP', esc(ip)] : null,
+            userAgent ? ['Dispositivo', esc(String(userAgent).slice(0, 120))] : null
+        ].filter(Boolean);
+
+        const detallesHtml = detalles.map(([label, value]) => `
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:8px;">
+              <tr><td style="padding:10px 14px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="font-size:12px;color:#64748B;">${label}</td>
+                  <td align="right" style="font-size:13px;color:#0F172A;font-weight:600;">${value}</td>
+                </tr></table>
+              </td></tr>
+            </table>`).join('');
+
+        const detallesText = detalles.map(([label, value]) => `${label}: ${value}`).join('\n');
+
+        const templateVariables = {
+            userName: esc(user.name || user.email || 'Usuario'),
+            userEmail: user.email,
+            appName: app,
+            connectedAt: esc(fecha),
+            detallesHtml,
+            detallesText,
+            ctaUrl: gestionUrl,
+            'process.env.BASE_URL': frontBase
+        };
+
+        let subject;
+        let htmlContent;
+        let textContent;
+        try {
+            const processed = await getProcessedTemplate('notification', 'mcp-app-connected', templateVariables);
+            if (!processed.html || processed.html.trim().length === 0) throw new Error('Template vacío');
+            subject = processed.subject;
+            htmlContent = processed.html;
+            textContent = processed.text;
+        } catch (tplError) {
+            logger.warn(`Template mcp-app-connected no disponible (${tplError.message}) — usando fallback en código`);
+            const { buildMcpAppConnectedFallback } = require('./mcpTemplateProcessor');
+            const fb = buildMcpAppConnectedFallback(templateVariables);
+            subject = fb.subject;
+            htmlContent = fb.html;
+            textContent = fb.text;
+        }
+
+        await sendEmail(user.email, subject, htmlContent, textContent);
+        logger.info(`[MCP] Aviso de app conectada enviado a ${user.email} (app: ${clientName || clientId})`);
+
+        try {
+            await NotificationLog.createFromEntity('custom', { _id: user._id }, {
+                method: 'email',
+                status: 'sent',
+                content: { subject, message: htmlContent, template: 'mcp-app-connected' },
+                delivery: { recipientEmail: user.email },
+                metadata: { source: 'mcp', clientId, clientName },
+                sentAt: new Date()
+            }, user._id);
+        } catch (logErr) {
+            logger.warn(`No se pudo registrar NotificationLog de MCP: ${logErr.message}`);
+        }
+
+        return { success: true, sent: true, message: 'Aviso enviado' };
+
+    } catch (error) {
+        logger.error(`[MCP] Error enviando aviso de app conectada: ${error.message}`);
+        return { success: false, sent: false, message: error.message };
+    }
+}
+
 module.exports = {
     sendCalendarNotifications,
     sendTaskNotifications,
@@ -2148,4 +2252,5 @@ module.exports = {
     sendJudicialMovementNotifications,
     sendFolderInactivityNotifications,
     sendPostalNotification,
+    sendMcpAppConnectedNotification,
 };
