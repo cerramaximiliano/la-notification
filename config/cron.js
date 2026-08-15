@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const {
   calendarNotificationJob,
+  morningDigestJob,
   postalSafeGuardJob,
   taskNotificationJob,
   movementNotificationJob,
@@ -26,72 +27,30 @@ const ADMIN_EMAIL = 'cerramaximiliano@gmail.com';
  * Configura los trabajos cron para las notificaciones
  */
 function setupCronJobs() {
-  // Obtener las expresiones cron de las variables de entorno o usar valores predeterminados
-  const calendarCron = process.env.NOTIFICATION_CALENDAR_CRON || '0 9 * * *';
-  const taskCron = process.env.NOTIFICATION_TASK_CRON || '15 9 * * *';
-  const movementCron = process.env.NOTIFICATION_MOVEMENT_CRON || '45 9 * * *';
+  // Nota: NOTIFICATION_CALENDAR_CRON / _TASK_CRON / _MOVEMENT_CRON quedaron
+  // obsoletas — los tres trabajos ahora corren dentro de la rutina matinal.
 
-  // Validar las expresiones cron
-  if (!cron.validate(calendarCron)) {
-    logger.error(`Expresión cron inválida para notificaciones de calendario: ${calendarCron}`);
-    return;
+  // Rutina matinal unificada: calendario + tareas + vencimientos + inactividad
+  // corren en secuencia y se envía UN solo informe al administrador (antes eran
+  // 4 crons y 4 correos entre las 9:00 y las 10:00).
+  const morningCron = process.env.NOTIFICATION_MORNING_DIGEST_CRON || '0 9 * * *';
+
+  if (!cron.validate(morningCron)) {
+    logger.error(`Expresión cron inválida para la rutina matinal: ${morningCron}`);
+  } else {
+    logger.info(`Configurando rutina matinal de notificaciones: ${morningCron}`);
+    cron.schedule(morningCron, async () => {
+      logger.info('Ejecutando rutina matinal de notificaciones');
+      try {
+        await morningDigestJob();
+      } catch (error) {
+        logger.error(`Error en la rutina matinal: ${error.message}`);
+      }
+    }, {
+      scheduled: true,
+      timezone: 'America/Argentina/Buenos_Aires'
+    });
   }
-
-  if (!cron.validate(taskCron)) {
-    logger.error(`Expresión cron inválida para notificaciones de tareas: ${taskCron}`);
-    return;
-  }
-
-  if (!cron.validate(movementCron)) {
-    logger.error(`Expresión cron inválida para notificaciones de movimientos: ${movementCron}`);
-    return;
-  }
-
-  // Configurar los trabajos cron
-  logger.info(`Configurando notificaciones de calendario: ${calendarCron}`);
-  cron.schedule(calendarCron, async () => {
-    logger.info('Ejecutando trabajo de notificaciones de calendario');
-    let result;
-    try {
-      result = await calendarNotificationJob();
-      logger.info('Trabajo de notificaciones de calendario completado');
-    } catch (error) {
-      logger.error(`Error en trabajo de notificaciones de calendario: ${error.message}`);
-    }
-  }, {
-    scheduled: true,
-    timezone: 'America/Argentina/Buenos_Aires'
-  });
-
-  logger.info(`Configurando notificaciones de tareas: ${taskCron}`);
-  cron.schedule(taskCron, async () => {
-    logger.info('Ejecutando trabajo de notificaciones de tareas');
-    let result;
-    try {
-      result = await taskNotificationJob();
-      logger.info('Trabajo de notificaciones de tareas completado');
-    } catch (error) {
-      logger.error(`Error en trabajo de notificaciones de tareas: ${error.message}`);
-    }
-  }, {
-    scheduled: true,
-    timezone: 'America/Argentina/Buenos_Aires'
-  });
-
-  logger.info(`Configurando notificaciones de movimientos: ${movementCron}`);
-  cron.schedule(movementCron, async () => {
-    logger.info('Ejecutando trabajo de notificaciones de movimientos');
-    let result;
-    try {
-      result = await movementNotificationJob();
-      logger.info('Trabajo de notificaciones de movimientos completado');
-    } catch (error) {
-      logger.error(`Error en trabajo de notificaciones de movimientos: ${error.message}`);
-    }
-  }, {
-    scheduled: true,
-    timezone: 'America/Argentina/Buenos_Aires'
-  });
 
   // Trabajo adicional para mantener viva la conexión a la base de datos
   cron.schedule('*/30 * * * *', () => {
@@ -166,27 +125,6 @@ function setupCronJobs() {
     });
   }
 
-  // Trabajo para notificaciones de inactividad de carpetas (caducidad y prescripción)
-  // Se ejecuta a las 10:00 AM hora Argentina
-  const folderInactivityCron = process.env.NOTIFICATION_FOLDER_INACTIVITY_CRON || '0 10 * * *';
-
-  if (!cron.validate(folderInactivityCron)) {
-    logger.error(`Expresión cron inválida para notificaciones de inactividad de carpetas: ${folderInactivityCron}`);
-  } else {
-    logger.info(`Configurando notificaciones de inactividad de carpetas: ${folderInactivityCron}`);
-    cron.schedule(folderInactivityCron, async () => {
-      logger.info('Ejecutando trabajo de notificaciones de inactividad de carpetas');
-      try {
-        await folderInactivityNotificationJob();
-        logger.info('Trabajo de notificaciones de inactividad de carpetas completado');
-      } catch (error) {
-        logger.error(`Error en trabajo de notificaciones de inactividad: ${error.message}`);
-      }
-    }, {
-      scheduled: true,
-      timezone: 'America/Argentina/Buenos_Aires'
-    });
-  }
 }
 
 module.exports = { setupCronJobs };

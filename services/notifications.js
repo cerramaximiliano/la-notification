@@ -588,6 +588,23 @@ async function sendCalendarNotifications({
         await sendEmail(user.email, subject, htmlContent, textContent);
         await banners.recordIfShown();
 
+        // Registrar en NotificationLog (faltaba: sin esto los envíos de
+        // calendario no aparecían en el historial ni en las métricas).
+        for (const event of upcomingEvents) {
+            try {
+                await NotificationLog.createFromEntity('event', event, {
+                    method: 'email',
+                    status: 'sent',
+                    content: { subject, message: htmlContent, template: 'calendar-events' },
+                    delivery: { recipientEmail: user.email },
+                    metadata: { source: 'cron' },
+                    sentAt: new Date()
+                }, user._id);
+            } catch (logErr) {
+                logger.warn(`No se pudo registrar NotificationLog de calendario: ${logErr.message}`);
+            }
+        }
+
         // Registrar la notificación enviada en cada evento
         const notificationDetails = {
             date: new Date(),
@@ -864,6 +881,22 @@ async function sendTaskNotifications({
         // Enviar el correo electrónico (ya no necesita generateEmailTemplate porque el template incluye todo)
         await sendEmail(user.email, subject, htmlContent, textContent);
         await banners.recordIfShown();
+
+        // Registrar en NotificationLog (faltaba, igual que en calendario).
+        for (const task of upcomingTasks) {
+            try {
+                await NotificationLog.createFromEntity('task', task, {
+                    method: 'email',
+                    status: 'sent',
+                    content: { subject, message: htmlContent, template: 'tasks-reminder' },
+                    delivery: { recipientEmail: user.email },
+                    metadata: { source: 'cron' },
+                    sentAt: new Date()
+                }, user._id);
+            } catch (logErr) {
+                logger.warn(`No se pudo registrar NotificationLog de tareas: ${logErr.message}`);
+            }
+        }
 
         // Crear el objeto de notificación que se añadirá a cada tarea
         const notificationDetails = {

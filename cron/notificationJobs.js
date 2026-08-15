@@ -32,7 +32,7 @@ const { sendTaskBrowserAlerts, sendMovementBrowserAlerts, sendCalendarBrowserAle
 /**
  * Notifica a todos los usuarios de sus próximos eventos de calendario
  */
-async function calendarNotificationJob() {
+async function calendarNotificationJob(options = {}) {
   try {
     logger.info('Iniciando trabajo de notificaciones de calendario');
 
@@ -162,7 +162,7 @@ async function calendarNotificationJob() {
 
     // Si está configurado, enviar email al administrador con el resumen del calendario
     // Esta funcionalidad es opcional y se puede integrar con el sistema centralizado
-    if (process.env.ADMIN_EMAIL) {
+    if (process.env.ADMIN_EMAIL && options.skipReport !== true) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
         
@@ -199,7 +199,7 @@ async function calendarNotificationJob() {
 /**
  * Notifica a todos los usuarios de sus próximas tareas a vencer
  */
-async function taskNotificationJob() {
+async function taskNotificationJob(options = {}) {
   try {
     logger.info('Iniciando trabajo de notificaciones de tareas');
 
@@ -329,7 +329,7 @@ async function taskNotificationJob() {
 
     // Si está configurado, enviar email al administrador con el resumen de tareas
     // Esta funcionalidad es opcional y se puede integrar con el sistema centralizado
-    if (process.env.ADMIN_EMAIL) {
+    if (process.env.ADMIN_EMAIL && options.skipReport !== true) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
         
@@ -366,7 +366,7 @@ async function taskNotificationJob() {
 /**
  * Notifica a todos los usuarios de sus próximos movimientos a expirar
  */
-async function movementNotificationJob() {
+async function movementNotificationJob(options = {}) {
   try {
     logger.info('Iniciando trabajo de notificaciones de movimientos');
 
@@ -496,7 +496,7 @@ async function movementNotificationJob() {
 
     // Si está configurado, enviar email al administrador con el resumen de movimientos
     // Esta funcionalidad es opcional y se puede integrar con el sistema centralizado
-    if (process.env.ADMIN_EMAIL) {
+    if (process.env.ADMIN_EMAIL && options.skipReport !== true) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
         
@@ -1047,7 +1047,7 @@ async function judicialMovementNotificationJob() {
 /**
  * Notifica a todos los usuarios de sus carpetas próximas a caducidad o prescripción por inactividad
  */
-async function folderInactivityNotificationJob() {
+async function folderInactivityNotificationJob(options = {}) {
   try {
     logger.info('Iniciando trabajo de notificaciones de inactividad de carpetas');
 
@@ -1114,7 +1114,7 @@ async function folderInactivityNotificationJob() {
 
     // Si está configurado, enviar email al administrador con el resumen
     // Esta funcionalidad es opcional y se puede integrar con el sistema centralizado
-    if (process.env.ADMIN_EMAIL) {
+    if (process.env.ADMIN_EMAIL && options.skipReport !== true) {
       try {
         const adminEmail = process.env.ADMIN_EMAIL;
 
@@ -1165,8 +1165,80 @@ async function postalSafeGuardJob() {
   }
 }
 
+/**
+ * Informe matinal unificado.
+ *
+ * Corre en secuencia los cuatro trabajos de la mañana (calendario, tareas,
+ * vencimientos e inactividad) con el informe individual desactivado, y envía
+ * UN solo correo al administrador con una sección por tipo. Antes salían
+ * cuatro correos separados entre las 9:00 y las 10:00, casi siempre con ceros.
+ *
+ * Cada trabajo se aísla: si uno falla, los demás corren igual y el informe
+ * muestra el error en su sección.
+ */
+async function morningDigestJob() {
+  logger.info('=== Iniciando rutina matinal de notificaciones ===');
+  const summaries = {};
+
+  const tareas = [
+    ['calendar', calendarNotificationJob, 'calendario'],
+    ['tasks', taskNotificationJob, 'tareas'],
+    ['movements', movementNotificationJob, 'vencimientos'],
+    ['inactivity', folderInactivityNotificationJob, 'inactividad']
+  ];
+
+  for (const [key, fn, label] of tareas) {
+    try {
+      logger.info(`[Matinal] Ejecutando ${label}...`);
+      summaries[key] = await fn({ skipReport: true });
+    } catch (error) {
+      logger.error(`[Matinal] Error en ${label}: ${error.message}`);
+      summaries[key] = { success: false, error: error.message };
+    }
+  }
+
+  // Informe unificado
+  if (process.env.ADMIN_EMAIL) {
+    try {
+      const { processMorningDigestData } = require('../services/adminReportProcessor');
+      const { getProcessedTemplate } = require('../services/templateProcessor');
+      const vars = processMorningDigestData(summaries);
+
+      let subject;
+      let html;
+      let text;
+      try {
+        const processed = await getProcessedTemplate('administration', 'morning-digest', vars);
+        if (!processed.html || processed.html.trim().length === 0) throw new Error('Template vacío');
+        subject = processed.subject;
+        html = processed.html;
+        text = processed.text;
+      } catch (tplError) {
+        // Fallback: el informe sale igual aunque falte el template en la base.
+        logger.warn(`Template morning-digest no disponible (${tplError.message}) — usando fallback`);
+        subject = `${vars.statusIcon} Rutina matinal de notificaciones — ${vars.fechaProcesada}`;
+        html = `<div style="font-family:Arial,sans-serif;max-width:640px;">
+          <h2 style="font-size:16px;color:${vars.statusColor};margin:0 0 4px 0;">${vars.statusIcon} ${vars.statusText}</h2>
+          <p style="font-size:12px;color:#6b7280;margin:0 0 14px 0;">${vars.timestamp} · ${vars.totalNotificaciones} notificación(es) enviada(s)</p>
+          ${vars.seccionesHtml}
+        </div>`;
+        text = `${vars.statusText}\n${vars.timestamp}\n\n${vars.seccionesText}`;
+      }
+
+      await sendEmail(process.env.ADMIN_EMAIL, subject, html, text);
+      logger.info(`[Matinal] Informe unificado enviado a ${process.env.ADMIN_EMAIL}`);
+    } catch (error) {
+      logger.error(`[Matinal] Error enviando el informe unificado: ${error.message}`);
+    }
+  }
+
+  logger.info('=== Rutina matinal completada ===');
+  return summaries;
+}
+
 module.exports = {
   calendarNotificationJob,
+  morningDigestJob,
   postalSafeGuardJob,
   taskNotificationJob,
   movementNotificationJob,

@@ -167,7 +167,8 @@ module.exports = {
   processJudicialMovementReportData,
   processLogCleanupReportData,
   buildConfigSummarySection,
-  buildSourceDistributionSection
+  buildSourceDistributionSection,
+  processMorningDigestData
 };
 
 /**
@@ -269,6 +270,113 @@ function buildSourceDistributionSection(data) {
     `\n- Total: ${total}\n`;
 
   return { html, text };
+}
+
+/**
+ * Informe matinal unificado: reemplaza los 4 correos separados (calendario,
+ * tareas, vencimientos e inactividad) por uno solo con una sección por tipo.
+ *
+ * @param {Object} summaries - { calendar, tasks, movements, inactivity } — cada
+ *   uno es el summary que devuelve su job (o {error} si falló)
+ * @returns {Object} variables para el template administration/morning-digest
+ */
+function processMorningDigestData(summaries = {}) {
+  const num = (v) => (Number.isFinite(v) ? v : 0);
+
+  const bloques = [
+    {
+      key: 'calendar',
+      titulo: 'Calendario',
+      s: summaries.calendar || {},
+      filas: (s) => [
+        ['Usuarios procesados', num(s.usersProcessed)],
+        ['Usuarios notificados', num(s.usersNotified)],
+        ['Notificaciones por email', num(s.totalEventNotifications ?? s.emailNotificationsSent)],
+        ['Alertas de navegador', num(s.totalBrowserAlerts ?? s.browserAlertsSent)]
+      ]
+    },
+    {
+      key: 'tasks',
+      titulo: 'Tareas',
+      s: summaries.tasks || {},
+      filas: (s) => [
+        ['Usuarios procesados', num(s.usersProcessed)],
+        ['Usuarios notificados', num(s.usersNotified)],
+        ['Notificaciones por email', num(s.totalTaskNotifications ?? s.emailNotificationsSent)],
+        ['Alertas de navegador', num(s.totalBrowserAlerts ?? s.browserAlertsSent)]
+      ]
+    },
+    {
+      key: 'movements',
+      titulo: 'Vencimientos',
+      s: summaries.movements || {},
+      filas: (s) => [
+        ['Usuarios procesados', num(s.usersProcessed)],
+        ['Usuarios notificados', num(s.usersNotified)],
+        ['Notificaciones por email', num(s.totalMovementNotifications ?? s.emailNotificationsSent)],
+        ['Alertas de navegador', num(s.totalBrowserAlerts ?? s.browserAlertsSent)]
+      ]
+    },
+    {
+      key: 'inactivity',
+      titulo: 'Caducidad y prescripción',
+      s: summaries.inactivity || {},
+      filas: (s) => [
+        ['Usuarios procesados', num(s.usersProcessed)],
+        ['Usuarios notificados', num(s.usersNotified)],
+        ['Avisos de caducidad', num(s.caducityNotificationsSent)],
+        ['Avisos de prescripción', num(s.prescriptionNotificationsSent)]
+      ]
+    }
+  ];
+
+  const totalNotificaciones = bloques.reduce((acc, b) => {
+    const filas = b.filas(b.s);
+    return acc + filas.filter(([label]) => /Notificaciones|Avisos/.test(label)).reduce((a, [, v]) => a + v, 0);
+  }, 0);
+  const conError = bloques.filter(b => b.s && (b.s.error || b.s.success === false));
+  const hayError = conError.length > 0;
+
+  const statusIcon = hayError ? '❌' : (totalNotificaciones > 0 ? '✅' : '🟦');
+  const statusText = hayError
+    ? `Completado con errores (${conError.map(b => b.titulo).join(', ')})`
+    : (totalNotificaciones > 0 ? 'Completado — hubo notificaciones' : 'Completado — sin novedades');
+  const statusColor = hayError ? '#EF4444' : (totalNotificaciones > 0 ? '#22C55E' : '#64748B');
+
+  const th = 'padding:5px 10px 5px 0;font-size:11px;color:#6b7280;text-align:left;';
+  const td = 'padding:5px 10px 5px 0;font-size:12px;color:#111827;';
+
+  const seccionesHtml = bloques.map((b) => {
+    const filas = b.filas(b.s);
+    const err = b.s && (b.s.error || b.s.success === false);
+    const filasHtml = err
+      ? `<tr><td style="${td}" colspan="2"><span style="color:#DC2626;">Error: ${b.s.error || 'el trabajo no completó'}</span></td></tr>`
+      : filas.map(([label, value]) =>
+          `<tr><td style="${th}">${label}</td><td style="${td}text-align:right;font-weight:600;">${value}</td></tr>`
+        ).join('');
+    return `
+      <div style="border:1px solid #e5e7eb;border-radius:8px;background-color:#ffffff;padding:12px 14px;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:700;color:#111827;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.4px;">${b.titulo}</div>
+        <table style="border-collapse:collapse;width:100%;">${filasHtml}</table>
+      </div>`;
+  }).join('');
+
+  const seccionesText = bloques.map((b) => {
+    const err = b.s && (b.s.error || b.s.success === false);
+    if (err) return `${b.titulo}: ERROR — ${b.s.error || 'no completó'}`;
+    return `${b.titulo}: ` + b.filas(b.s).map(([l, v]) => `${l} ${v}`).join(' · ');
+  }).join('\n');
+
+  return {
+    statusIcon,
+    statusText,
+    statusColor,
+    totalNotificaciones,
+    seccionesHtml,
+    seccionesText,
+    timestamp: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+    fechaProcesada: new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+  };
 }
 
 /**
