@@ -1303,6 +1303,13 @@ async function sendJudicialMovementNotifications({
                 // Folder archivado: descartar solo si la política lo pide.
                 // Sin folder resuelto no se puede determinar → se notifica.
                 const folder = movement.expediente?.id ? folderByCausa[movement.expediente.id] : null;
+
+                // Salvaguarda opcional: sin folder de esa causa, no notificar
+                // (cubre el fallback de los workers a userCausaIds).
+                if (notifConfig?.limits?.requireFolderForDelivery === true && !folder) {
+                    toSkip.push({ movement, reason: 'Descartado: el usuario no tiene esta causa en su cuenta (requireFolderForDelivery)' });
+                    continue;
+                }
                 if (policy.notifyArchivedFolders === false && folder && folder.archived === true) {
                     toSkip.push({ movement, reason: 'Descartado por política: folder archivado (notifyArchivedFolders=false)' });
                     continue;
@@ -1930,6 +1937,22 @@ async function sendFolderInactivityNotifications({
                 await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent);
                 await recordInactivityBanner();
 
+                // Registrar en NotificationLog (era el último flujo sin rastro)
+                for (const folder of caducityFolders) {
+                    try {
+                        await NotificationLog.createFromEntity('custom', folder, {
+                            method: 'email',
+                            status: 'sent',
+                            content: { subject: processedTemplate.subject, message: adjusted.htmlContent, template: 'folder-caducity' },
+                            delivery: { recipientEmail: user.email },
+                            metadata: { source: 'cron', alertType: 'caducity' },
+                            sentAt: new Date()
+                        }, user._id);
+                    } catch (logErr) {
+                        logger.warn(`No se pudo registrar NotificationLog de caducidad: ${logErr.message}`);
+                    }
+                }
+
                 // Registrar notificación en cada folder
                 const notificationDetails = {
                     date: new Date(),
@@ -1963,6 +1986,22 @@ async function sendFolderInactivityNotifications({
 
                 await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent);
                 await recordInactivityBanner();
+
+                // Registrar en NotificationLog (era el último flujo sin rastro)
+                for (const folder of prescriptionFolders) {
+                    try {
+                        await NotificationLog.createFromEntity('custom', folder, {
+                            method: 'email',
+                            status: 'sent',
+                            content: { subject: processedTemplate.subject, message: adjusted.htmlContent, template: 'folder-prescription' },
+                            delivery: { recipientEmail: user.email },
+                            metadata: { source: 'cron', alertType: 'prescription' },
+                            sentAt: new Date()
+                        }, user._id);
+                    } catch (logErr) {
+                        logger.warn(`No se pudo registrar NotificationLog de prescripción: ${logErr.message}`);
+                    }
+                }
 
                 // Registrar notificación en cada folder
                 const notificationDetails = {

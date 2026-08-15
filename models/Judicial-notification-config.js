@@ -80,6 +80,15 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             min: 1,
             max: 168 // Una semana
         },
+        // Salvaguarda de destinatarios: exigir que el usuario tenga la causa en
+        // su cuenta (folder) para recibir el movimiento. Cubre el fallback de
+        // los workers a userCausaIds, que notifica a todos los vinculados
+        // cuando la causa no tiene userUpdatesEnabled. Default false =
+        // comportamiento actual.
+        requireFolderForDelivery: {
+            type: Boolean,
+            default: false
+        },
         // Aplicar maxNotificationsPerUserPerDay y minHoursBetweenSameExpediente
         // en la entrega (la-notification). Default false: estos límites
         // existían declarados pero sin efecto — encenderlos es opt-in para no
