@@ -1216,12 +1216,9 @@ async function morningDigestJob() {
       } catch (tplError) {
         // Fallback: el informe sale igual aunque falte el template en la base.
         logger.warn(`Template morning-digest no disponible (${tplError.message}) — usando fallback`);
+        const { buildMorningDigestFallbackHtml } = require('../services/adminReportProcessor');
         subject = `${vars.statusIcon} Rutina matinal de notificaciones — ${vars.fechaProcesada}`;
-        html = `<div style="font-family:Arial,sans-serif;max-width:640px;">
-          <h2 style="font-size:16px;color:${vars.statusColor};margin:0 0 4px 0;">${vars.statusIcon} ${vars.statusText}</h2>
-          <p style="font-size:12px;color:#6b7280;margin:0 0 14px 0;">${vars.timestamp} · ${vars.totalNotificaciones} notificación(es) enviada(s)</p>
-          ${vars.seccionesHtml}
-        </div>`;
+        html = buildMorningDigestFallbackHtml(vars);
         text = `${vars.statusText}\n${vars.timestamp}\n\n${vars.seccionesText}`;
       }
 
