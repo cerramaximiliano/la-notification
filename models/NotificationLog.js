@@ -70,6 +70,15 @@ const notificationLogSchema = new mongoose.Schema({
       lastAttemptAt: Date,
       deliveredAt: Date,
       failureReason: String,
+      // MessageId que devuelve SES al aceptar el envío. Es la única llave para
+      // correlacionar después los eventos de entrega/rebote/queja que SES
+      // publica por SNS. Sin esto, "sent" solo significa "SES lo aceptó", no
+      // que el correo haya llegado.
+      sesMessageId: {
+        type: String,
+        index: true,
+        sparse: true
+      },
       recipientEmail: String,
       recipientPhone: String
     }

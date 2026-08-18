@@ -311,7 +311,8 @@ async function sendMovementNotifications({
                     },
                     delivery: {
                         recipientEmail: user.email,
-                        failureReason: failureReason
+                        failureReason: failureReason,
+                        sesMessageId: sesMessageId
                     },
                     config: {
                         daysInAdvance: movement.notificationSettings?.daysInAdvance || globalDaysInAdvance,
@@ -585,7 +586,7 @@ async function sendCalendarNotifications({
         logger.info('Usando template de base de datos para notificaciones de calendario');
         
         // Enviar el correo electrónico
-        await sendEmail(user.email, subject, htmlContent, textContent);
+        const sesResultCal = await sendEmail(user.email, subject, htmlContent, textContent);
         await banners.recordIfShown();
 
         // Registrar en NotificationLog (faltaba: sin esto los envíos de
@@ -596,7 +597,7 @@ async function sendCalendarNotifications({
                     method: 'email',
                     status: 'sent',
                     content: { subject, message: htmlContent, template: 'calendar-events' },
-                    delivery: { recipientEmail: user.email },
+                    delivery: { recipientEmail: user.email, sesMessageId: sesResultCal?.MessageId || null },
                     metadata: { source: 'cron' },
                     sentAt: new Date()
                 }, user._id);
@@ -879,7 +880,7 @@ async function sendTaskNotifications({
         logger.info('Usando template de base de datos para notificaciones de tareas');
         
         // Enviar el correo electrónico (ya no necesita generateEmailTemplate porque el template incluye todo)
-        await sendEmail(user.email, subject, htmlContent, textContent);
+        const sesResultTasks = await sendEmail(user.email, subject, htmlContent, textContent);
         await banners.recordIfShown();
 
         // Registrar en NotificationLog (faltaba, igual que en calendario).
@@ -889,7 +890,7 @@ async function sendTaskNotifications({
                     method: 'email',
                     status: 'sent',
                     content: { subject, message: htmlContent, template: 'tasks-reminder' },
-                    delivery: { recipientEmail: user.email },
+                    delivery: { recipientEmail: user.email, sesMessageId: sesResultTasks?.MessageId || null },
                     metadata: { source: 'cron' },
                     sentAt: new Date()
                 }, user._id);
