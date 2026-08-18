@@ -83,6 +83,13 @@ const initializeApp = async () => {
         const judicialMovementRoutes = require('./routes/judicialMovements');
         app.use('/api/judicial-movements', judicialMovementRoutes);
 
+        // Eventos de SES vía SNS (entrega, rebote, queja). Sin auth: lo llama
+        // AWS, no el frontend — la validación es por el flujo de confirmación
+        // de suscripción de SNS. Ver controllers/sesEventsController.js para
+        // los pasos de infraestructura que faltan en la consola de AWS.
+        const sesEventsRoutes = require('./routes/sesEvents');
+        app.use('/api/ses-events', sesEventsRoutes);
+
         // Configurar rutas de eventos de carpetas (WebSocket relay)
         const folderEventRoutes = require('./routes/folderEvents');
         app.use('/api/folder-events', folderEventRoutes);

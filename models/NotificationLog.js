@@ -79,6 +79,12 @@ const notificationLogSchema = new mongoose.Schema({
         index: true,
         sparse: true
       },
+      // Los completa el receptor de eventos SES (controllers/sesEventsController).
+      // bouncePermanent: dirección inexistente o bloqueada — no reintentar.
+      // complaint: el destinatario lo marcó como spam; seguir enviándole daña
+      // la reputación del dominio para todos los usuarios.
+      bouncePermanent: { type: Boolean },
+      complaint: { type: Boolean },
       recipientEmail: String,
       recipientPhone: String
     }
