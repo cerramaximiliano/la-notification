@@ -579,10 +579,31 @@ async function sendCalendarNotifications({
             return event._id;
         });
         
+        // Carpetas vinculadas a los eventos del lote (una sola query): permite
+        // renderizar el chip de carpeta y el deep-link al movimiento en el email.
+        const folderMap = new Map();
+        try {
+            const folderIds = [...new Set(
+                upcomingEvents
+                    .map(e => e.folderId)
+                    .filter(id => id && mongoose.Types.ObjectId.isValid(id))
+            )];
+            if (folderIds.length) {
+                const folders = await Folder.find({ _id: { $in: folderIds } })
+                    .select('folderName archived')
+                    .lean();
+                folders.forEach(f => folderMap.set(String(f._id), f));
+            }
+        } catch (folderErr) {
+            // El contexto de carpeta es un extra: si el lookup falla, el email
+            // sale igual que siempre, sin chip ni link.
+            logger.warn(`No se pudieron resolver las carpetas de los eventos: ${folderErr.message}`);
+        }
+
         // Procesar datos de los eventos + banners compartidos
         const { resolveEmailBanners, applyBannerFallback } = require('./emailBanners');
         const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'calendario' });
-        const templateVariables = { ...processEventsData(upcomingEvents, user), ...banners.templateVars };
+        const templateVariables = { ...processEventsData(upcomingEvents, user, folderMap), ...banners.templateVars };
         
         // Obtener template procesado
         const processedTemplate = await getProcessedTemplate('notification', 'calendar-events', templateVariables);

@@ -12,9 +12,13 @@ function pill(text, bg, color, border) {
  * (mismo lenguaje que el email de movimientos judiciales).
  * @param {Array} events - Array de eventos próximos
  * @param {Object} user - Usuario destinatario
+ * @param {Map} [folderMap] - folderId (string) → { folderName, archived }, para
+ *   renderizar la carpeta vinculada y armar los deep-links. Opcional: sin el
+ *   map, los eventos se renderizan como siempre.
  * @returns {Object} - Variables procesadas para el template
  */
-function processEventsData(events, user) {
+function processEventsData(events, user, folderMap = new Map()) {
+  const baseUrl = (process.env.BASE_URL || 'https://www.lawanalytics.app').replace(/\/$/, '');
   let eventsTableHtml = '';
   let eventsListText = '';
 
@@ -43,6 +47,28 @@ function processEventsData(events, user) {
     }
     const allDayNote = event.allDay ? ` <span style="color:#94A3B8;">(todo el día)</span>` : '';
 
+    // Contexto de carpeta y movimiento (si el evento está vinculado).
+    // El deep-link ?movement=...&open=1 es el mismo que usa el botón
+    // "Ir al movimiento" del calendario: resalta la fila y abre el visor.
+    const folder = event.folderId ? folderMap.get(String(event.folderId)) : null;
+    const folderUrl = event.folderId ? `${baseUrl}/apps/folders/details/${encodeURIComponent(event.folderId)}` : null;
+    const movementUrl =
+      event.folderId && event.movementRef ? `${folderUrl}?movement=${encodeURIComponent(event.movementRef)}&open=1` : null;
+
+    let contextRowHtml = '';
+    if (folder) {
+      const folderPill = pill(esc(folder.folderName || 'Carpeta'), '#EFF4FF', '#3A7BFF', '#D6E4FF');
+      const archivedPill = folder.archived ? ` ${pill('Archivada', '#FFF7ED', '#B45309', '#FDBA74')}` : '';
+      const cta = movementUrl
+        ? `<a href="${movementUrl}" style="font-size:12px;font-weight:600;color:#3A7BFF;text-decoration:none;white-space:nowrap;">Ver movimiento &rarr;</a>`
+        : `<a href="${folderUrl}" style="font-size:12px;font-weight:600;color:#3A7BFF;text-decoration:none;white-space:nowrap;">Ver carpeta &rarr;</a>`;
+      contextRowHtml = `
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;"><tr>
+            <td>${folderPill}${archivedPill}</td>
+            <td align="right">${cta}</td>
+          </tr></table>`;
+    }
+
     eventsTableHtml += `
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:10px;">
         <tr><td style="padding:12px 14px;">
@@ -50,7 +76,7 @@ function processEventsData(events, user) {
             <td style="font-size:13px;font-weight:600;color:#0F172A;">${esc(event.title)}${urgencyPill}</td>
             <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">${formattedDate}${timeDisplay}${allDayNote}</td>
           </tr></table>
-          ${event.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${esc(event.description)}</p>` : ''}
+          ${event.description ? `<p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">${esc(event.description)}</p>` : ''}${contextRowHtml}
         </td></tr>
       </table>`;
 
@@ -65,6 +91,10 @@ function processEventsData(events, user) {
     eventsListText += `: ${event.title}\n`;
     if (event.description) {
       eventsListText += `  ${event.description}\n`;
+    }
+    if (folder) {
+      eventsListText += `  Carpeta: ${folder.folderName || 'Carpeta'}${folder.archived ? ' (archivada)' : ''}\n`;
+      eventsListText += `  ${movementUrl || folderUrl}\n`;
     }
   });
 

@@ -67,6 +67,18 @@ const EventSchema = new Schema(
       type: String,
       required: false,
     },
+    // Referencia al movimiento judicial que originó el evento (vencimientos
+    // creados desde el viewer). Espejo del modelo del hub: sin estos campos acá,
+    // Mongoose los descarta al leer y el email no puede armar el deep-link.
+    movementRef: {
+      type: String,
+      required: false,
+    },
+    movementSource: {
+      type: String,
+      enum: ["pjn", "mev", "scba", "eje", "manual", null],
+      required: false,
+    },
     userId: {
       type: Schema.Types.ObjectId,
       ref: "User",
