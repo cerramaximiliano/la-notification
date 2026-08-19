@@ -277,9 +277,16 @@ async function sendMovementNotifications({
         // Enviar el correo electrónico
         let emailStatus = 'sent';
         let failureReason = null;
-        
+        // Se declara acá porque más abajo el NotificationLog lo referencia. Sin esta
+        // declaración la referencia lanzaba ReferenceError dentro del try/catch que
+        // envuelve la creación del log: el error se tragaba y el log de esta rama
+        // NUNCA se creaba (la colección no tiene un solo registro entityType
+        // 'movement', verificado el 19/08).
+        let sesMessageId = null;
+
         try {
-            await sendEmail(user.email, subject, htmlContent, textContent);
+            const sesResult = await sendEmail(user.email, subject, htmlContent, textContent);
+            sesMessageId = sesResult?.MessageId || null;
             await banners.recordIfShown();
         } catch (emailError) {
             emailStatus = 'failed';
@@ -1543,9 +1550,15 @@ async function sendJudicialMovementNotifications({
         // Enviar email
         let emailStatus = 'sent';
         let failureReason = null;
-        
+        // El MessageId de SES es lo que después correlaciona los eventos de entrega
+        // (controllers/sesEventsController.js). Sin guardarlo, el log se queda en
+        // "sent" para siempre — que solo significa que SES aceptó el envío, no que
+        // el correo haya llegado.
+        let sesMessageId = null;
+
         try {
-            await sendEmail(user.email, subject, htmlContent, textContent);
+            const sesResult = await sendEmail(user.email, subject, htmlContent, textContent);
+            sesMessageId = sesResult?.MessageId || null;
         } catch (emailError) {
             emailStatus = 'failed';
             failureReason = emailError.message;
@@ -1667,7 +1680,8 @@ async function sendJudicialMovementNotifications({
                     },
                     delivery: {
                         recipientEmail: user.email,
-                        failureReason: failureReason
+                        failureReason: failureReason,
+                        sesMessageId: sesMessageId
                     },
                     metadata: {
                         source: 'cron',
