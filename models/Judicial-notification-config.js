@@ -438,6 +438,46 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         }
     },
 
+    // Banner de invitación a sincronizar Google Calendar. Solo se muestra a
+    // usuarios con googleCalendarConnected !== true. Defaults espejados en
+    // emailBanners.buildGoogleCalendarBanner — cambiarlos acá no alcanza.
+    googleCalendarBanner: {
+        enabled: {
+            type: Boolean,
+            default: true
+        },
+        title: {
+            type: String,
+            default: null
+        },
+        text: {
+            type: String,
+            default: null
+        },
+        ctaLabel: {
+            type: String,
+            default: null
+        },
+        ctaUrl: {
+            type: String,
+            default: null
+        },
+        emailTypes: {
+            type: [String],
+            default: ['movimiento', 'calendario', 'tareas', 'vencimiento', 'inactividad', 'postal']
+        },
+        // Cooldown propio (días) — es una invitación, no un recordatorio
+        cooldownDays: {
+            type: Number,
+            default: 14
+        },
+        // Mostrar aunque el email ya lleve el banner de plan o el de feature
+        showWithOtherBanners: {
+            type: Boolean,
+            default: false
+        }
+    },
+
     // Política transversal de banners promocionales.
     bannerPolicy: {
         // Cooldown COMPARTIDO: como máximo un banner promocional por usuario
