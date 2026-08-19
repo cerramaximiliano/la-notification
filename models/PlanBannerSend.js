@@ -17,8 +17,8 @@ const planBannerSendSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-  // Tipo de banner mostrado: 'plan' | 'feature' (habilita el cooldown
-  // compartido entre banners promocionales).
+  // Tipo de banner mostrado: 'plan' | 'feature' | 'gcal' (habilita el
+  // cooldown compartido entre banners promocionales).
   bannerKind: {
     type: String,
     default: 'plan',

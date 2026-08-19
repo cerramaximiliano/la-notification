@@ -197,6 +197,14 @@ const UserSchema = new Schema(
       type: UserPreferencesSchema,
       default: () => ({})
     },
+
+    // Espejo del hub: si el usuario vinculó Google Calendar. Lo usa el banner
+    // de invitación a sincronizar (emailBanners) — sin el campo en el schema,
+    // Mongoose lo descarta al leer y el banner no puede segmentar.
+    googleCalendarConnected: {
+      type: Boolean,
+      default: false
+    },
   },
   {
     timestamps: true

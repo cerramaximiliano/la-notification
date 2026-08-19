@@ -2,7 +2,7 @@
  * Banners compartidos para TODOS los emails de notificación al usuario
  * (movimientos, calendario, tareas, vencimientos, caducidad, prescripción).
  *
- * Dos banners, ambos gobernados por el config doc (editable en caliente):
+ * Banners gobernados por el config doc (editable en caliente):
  *   - Plan upgrade (planBanner): usuarios con carpetas archivadas → sugiere
  *     el plan que las cubra. Cooldown COMPARTIDO entre todos los tipos de
  *     email (plan-banner-sends): un usuario ve como máximo un banner de plan
@@ -10,6 +10,9 @@
  *   - Feature banner (featureBanner): anuncio publicitario/de novedades
  *     definido por el admin (título, texto, CTA). Por default no se muestra
  *     junto al de plan (showWithPlanBanner) para no apilar banners.
+ *   - Google Calendar (googleCalendarBanner): invitación a sincronizar para
+ *     usuarios con googleCalendarConnected !== true. Cooldown propio (default
+ *     14 días) y un solo banner promocional por email.
  *
  * Uso en cada sender:
  *   const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'calendar' });
@@ -28,9 +31,14 @@ const EMPTY_VARS = {
   planBannerText: '',
   featureBannerHtml: '',
   featureBannerText: '',
+  gcalBannerHtml: '',
+  gcalBannerText: '',
   optionsBannerHtml: '',
   optionsBannerText: ''
 };
+
+// Logo oficial de Google Calendar (asset hosteado por Google, estable desde 2020)
+const GCAL_LOGO_URL = 'https://ssl.gstatic.com/calendar/images/dynamiclogo_2020q4/calendar_31_2x.png';
 
 /**
  * Banner de anuncio/feature (config featureBanner). Marker <!--feature-banner-->.
@@ -59,6 +67,45 @@ function buildFeatureBanner(cfg, frontBaseUrl, sourceEmail) {
   const text = `\n---\n${cfg.title}\n${cfg.text ? `${cfg.text}\n` : ''}${ctaLabel}: ${ctaUrl}\n`;
 
   return { html, text };
+}
+
+/**
+ * Banner de invitación a sincronizar Google Calendar (config
+ * googleCalendarBanner). Marker <!--gcal-banner-->. Mismo lenguaje visual que
+ * el feature banner (card #EFF4FF), con el logo de Calendar a la izquierda.
+ * Solo se resuelve para usuarios con googleCalendarConnected !== true.
+ */
+function buildGoogleCalendarBanner(cfg, frontBaseUrl, sourceEmail) {
+  const base = frontBaseUrl || DEFAULT_FRONT_BASE_URL;
+  const rawUrl = cfg.ctaUrl || `${base}/apps/calendar`;
+  const ctaUrl = `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}source=email_${sourceEmail}_gcal`;
+  const title = cfg.title || 'Conectá tu Google Calendar';
+  const text = cfg.text
+    || 'Traé tus audiencias y vencimientos de Google a Law||Analytics y recibí todos tus recordatorios en un solo lugar. Con la sincronización automática, tus eventos se mantienen al día solos.';
+  const ctaLabel = cfg.ctaLabel || 'Conectar mi calendario';
+
+  const html = `
+      <!--gcal-banner--><tr><td class="px-card" style="padding:8px 44px 16px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#EFF4FF;border:1px solid #C7D8FF;border-radius:10px;">
+          <tr><td style="padding:18px 24px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td valign="top" style="width:56px;padding-right:16px;">
+                <img src="${GCAL_LOGO_URL}" width="40" height="40" alt="Google Calendar" style="display:block;border:0;" />
+              </td>
+              <td valign="top">
+                <p style="margin:0 0 4px 0;font-size:11px;color:#3A7BFF;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">Google Calendar</p>
+                <p style="margin:0 0 6px 0;font-size:15px;line-height:1.4;color:#0F172A;font-weight:700;">${title}</p>
+                <p style="margin:0 0 14px 0;font-size:13px;line-height:1.6;color:#475569;">${text}</p>
+                <a href="${ctaUrl}" style="font-size:13px;font-weight:600;color:#3A7BFF;text-decoration:none;">${ctaLabel}&nbsp;&#8594;</a>
+              </td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>`;
+
+  const textVersion = `\n---\n${title}\n${text}\n${ctaLabel}: ${ctaUrl}\n`;
+
+  return { html, text: textVersion };
 }
 
 /**
@@ -206,6 +253,60 @@ async function resolveEmailBanners(userId, user, options = {}) {
     logger.warn(`[EmailBanners] No se pudo armar el feature banner: ${err.message}`);
   }
 
+  // ---- Banner de Google Calendar (usuarios sin sincronizar) ----
+  let gcalBannerMeta = null;
+  try {
+    const gcalCfg = (notifConfig && notifConfig.googleCalendarBanner) || {};
+    const policyCfg3 = (notifConfig && notifConfig.bannerPolicy) || {};
+    const shared3 = policyCfg3.sharedCooldown || {};
+    const participants3 = Array.isArray(shared3.participants) ? shared3.participants : ['plan', 'feature'];
+    const gcalParticipates = shared3.enabled !== false && participants3.includes('gcal');
+
+    // Segmentación: solo usuarios que nunca vincularon Google Calendar. Sin el
+    // doc del usuario no se puede saber → no se muestra (mejor omitir que
+    // invitarle a conectar a alguien que ya conectó).
+    const isTarget = user && user.googleCalendarConnected !== true;
+
+    // Un solo banner promocional por email: si ya va el de plan o el de
+    // feature, este se calla (salvo override explícito del admin).
+    const suppressedByOthers = (result.planBannerShown || result.featureBannerShown)
+      && gcalCfg.showWithOtherBanners !== true;
+
+    if (gcalCfg.enabled !== false && isTarget && !suppressedByOthers && allowedForType(gcalCfg, sourceEmail)) {
+      const { PlanBannerSend } = require('../models');
+      // Cooldown propio (default 14 días): es una invitación, no un recordatorio.
+      const cooldownDays3 = Number.isFinite(gcalCfg.cooldownDays) ? gcalCfg.cooldownDays : 14;
+      let blocked = false;
+      if (cooldownDays3 > 0) {
+        const since3 = new Date(Date.now() - cooldownDays3 * 24 * 3600 * 1000);
+        blocked = Boolean(await PlanBannerSend.exists({ userId, sentAt: { $gte: since3 }, bannerKind: 'gcal' }));
+      }
+      // Si participa del cooldown compartido, cualquier banner de la ventana lo bloquea.
+      if (!blocked && gcalParticipates) {
+        const daysShared = Number.isFinite(shared3.days) ? shared3.days : 7;
+        if (daysShared > 0) {
+          const sinceShared = new Date(Date.now() - daysShared * 24 * 3600 * 1000);
+          blocked = Boolean(await PlanBannerSend.exists({
+            userId,
+            sentAt: { $gte: sinceShared },
+            bannerKind: { $in: participants3 }
+          }));
+        }
+      }
+      if (!blocked) {
+        const gcal = buildGoogleCalendarBanner(gcalCfg, frontBase, sourceEmail);
+        result.templateVars.gcalBannerHtml = gcal.html;
+        result.templateVars.gcalBannerText = gcal.text;
+        result.gcalBannerShown = true;
+        // Siempre se registra: el cooldown propio depende de este registro.
+        gcalBannerMeta = { bannerKind: 'gcal', emailType: sourceEmail };
+        logger.info(`Banner de Google Calendar para ${user?.email || userId} (${sourceEmail})`);
+      }
+    }
+  } catch (err) {
+    logger.warn(`[EmailBanners] No se pudo armar el banner de Google Calendar: ${err.message}`);
+  }
+
   // Strip informativo de opciones de notificación (no participa del cooldown
   // por default: es ayuda de configuración, no promoción).
   try {
@@ -224,7 +325,7 @@ async function resolveEmailBanners(userId, user, options = {}) {
   }
 
   // ---- Registro para el cooldown (llamar tras el envío exitoso) ----
-  const metaToRecord = planBannerMeta || featureBannerMeta;
+  const metaToRecord = planBannerMeta || featureBannerMeta || gcalBannerMeta;
   if (metaToRecord) {
     result.recordIfShown = async () => {
       try {
@@ -249,6 +350,7 @@ function applyBannerFallback(htmlContent, textContent, banners) {
   const missing = [
     vars.planBannerHtml && !htmlContent.includes('<!--plan-banner-->') ? vars.planBannerHtml : null,
     vars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? vars.featureBannerHtml : null,
+    vars.gcalBannerHtml && !htmlContent.includes('<!--gcal-banner-->') ? vars.gcalBannerHtml : null,
     vars.optionsBannerHtml && !htmlContent.includes('<!--options-banner-->') ? vars.optionsBannerHtml : null
   ].filter(Boolean);
 
@@ -265,10 +367,14 @@ function applyBannerFallback(htmlContent, textContent, banners) {
   if (vars.featureBannerText && featureTitleLine && !textContent.includes(featureTitleLine)) {
     textContent = textContent + vars.featureBannerText;
   }
+  const gcalTitleLine = vars.gcalBannerText ? (vars.gcalBannerText.trim().split('\n')[1] || null) : null;
+  if (vars.gcalBannerText && gcalTitleLine && !textContent.includes(gcalTitleLine)) {
+    textContent = textContent + vars.gcalBannerText;
+  }
   if (vars.optionsBannerText && !textContent.includes('Configurar notificaciones:')) {
     textContent = textContent + vars.optionsBannerText;
   }
   return { htmlContent, textContent };
 }
 
-module.exports = { resolveEmailBanners, buildFeatureBanner, applyBannerFallback };
+module.exports = { resolveEmailBanners, buildFeatureBanner, buildGoogleCalendarBanner, applyBannerFallback };
