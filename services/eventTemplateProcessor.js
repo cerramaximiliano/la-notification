@@ -59,9 +59,10 @@ function processEventsData(events, user, folderMap = new Map()) {
     if (folder) {
       const folderPill = pill(esc(folder.folderName || 'Carpeta'), '#EFF4FF', '#3A7BFF', '#D6E4FF');
       const archivedPill = folder.archived ? ` ${pill('Archivada', '#FFF7ED', '#B45309', '#FDBA74')}` : '';
+      // Mismo estilo de CTA que el resto de los correos (13px, &nbsp;&#8594;)
       const cta = movementUrl
-        ? `<a href="${movementUrl}" style="font-size:12px;font-weight:600;color:#3A7BFF;text-decoration:none;white-space:nowrap;">Ver movimiento &rarr;</a>`
-        : `<a href="${folderUrl}" style="font-size:12px;font-weight:600;color:#3A7BFF;text-decoration:none;white-space:nowrap;">Ver carpeta &rarr;</a>`;
+        ? `<a href="${movementUrl}" style="font-size:13px;font-weight:600;color:#3A7BFF;text-decoration:none;white-space:nowrap;">Ver movimiento&nbsp;&#8594;</a>`
+        : `<a href="${folderUrl}" style="font-size:13px;font-weight:600;color:#3A7BFF;text-decoration:none;white-space:nowrap;">Ver carpeta&nbsp;&#8594;</a>`;
       contextRowHtml = `
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;"><tr>
             <td>${folderPill}${archivedPill}</td>
