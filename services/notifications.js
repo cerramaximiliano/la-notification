@@ -2217,6 +2217,103 @@ async function sendPostalNotification({ notification }) {
 }
 
 /**
+ * Alerta OPERATIVA de seguimiento postal al admin (no al usuario final).
+ *
+ * La dispara postal-tracking-service vía webhook cuando su worker deja de
+ * consultar seguimientos activos (pipeline roto: crash-loop, cola trabada)
+ * y de nuevo cuando la condición se normaliza. El anti-spam vive en el
+ * servicio de origen; acá solo se resuelve config, template, banners y envío.
+ *
+ * Destinatarios: config postalNotifications.adminAlerts.recipients, con
+ * fallback a env ADMIN_EMAIL. Gates: kill-switch global + adminAlerts.enabled.
+ *
+ * @param {Object} alert - { kind: 'stale'|'recovered', staleAfterHours, trackings, activeSince }
+ * @returns {Object} { success, sent, message }
+ */
+async function sendPostalAdminAlert(alert) {
+    const { processPostalAdminAlertData, buildFallbackHtml, buildFallbackText } = require('./postalAdminAlertProcessor');
+    const { resolveEmailBanners, applyBannerFallback } = require('./emailBanners');
+    const policyService = require('./notificationPolicyService');
+    const { getProcessedTemplate } = require('./templateProcessor');
+
+    try {
+        const notifConfig = await policyService.getConfigCached();
+        if (!policyService.isGloballyEnabled(notifConfig)) {
+            return { success: true, sent: false, message: 'Notificaciones deshabilitadas globalmente' };
+        }
+        const adminCfg = notifConfig?.postalNotifications?.adminAlerts || {};
+        if (adminCfg.enabled === false) {
+            return { success: true, sent: false, message: 'Alertas admin postales deshabilitadas por configuración' };
+        }
+
+        const configured = Array.isArray(adminCfg.recipients) ? adminCfg.recipients.filter(Boolean) : [];
+        const raw = configured.length > 0 ? configured.join(',') : (process.env.ADMIN_EMAIL || 'cerramaximiliano@gmail.com');
+        const recipients = raw.split(',').map((e) => e.trim()).filter(Boolean);
+        if (recipients.length === 0) {
+            return { success: false, sent: false, message: 'Sin destinatarios configurados' };
+        }
+
+        const vars = processPostalAdminAlertData(alert);
+
+        // Banners: mismo sistema que el resto de los emails. Se resuelven contra
+        // la cuenta del primer destinatario si existe como User; si no, sin banners.
+        let banners = { templateVars: {}, recordIfShown: async () => {} };
+        try {
+            const adminUser = await User.findOne({ email: recipients[0].toLowerCase() });
+            if (adminUser) {
+                banners = await resolveEmailBanners(adminUser._id, adminUser, { sourceEmail: 'postal_admin' });
+            }
+        } catch (bannerErr) {
+            logger.warn(`[PostalAdminAlert] No se pudieron resolver banners: ${bannerErr.message}`);
+        }
+
+        const templateVariables = { ...vars, ...banners.templateVars };
+
+        let subject;
+        let htmlContent;
+        let textContent;
+        try {
+            const processed = await getProcessedTemplate('notification', 'postal-admin-alert', templateVariables);
+            if (!processed.html || processed.html.trim().length === 0) {
+                throw new Error('Template vacío');
+            }
+            subject = processed.subject;
+            htmlContent = processed.html;
+            textContent = processed.text;
+        } catch (tplError) {
+            logger.warn(`Template postal-admin-alert no disponible (${tplError.message}) — usando fallback en código`);
+            subject = vars.subjectText;
+            htmlContent = buildFallbackHtml(vars, banners.templateVars);
+            textContent = buildFallbackText(vars, banners.templateVars);
+        }
+
+        const adjusted = applyBannerFallback(htmlContent, textContent, banners);
+
+        // sendEmail es de destinatario único: se envía uno por uno.
+        let sentCount = 0;
+        for (const recipient of recipients) {
+            try {
+                await sendEmail(recipient, subject, adjusted.htmlContent, adjusted.textContent);
+                sentCount++;
+            } catch (sendErr) {
+                logger.error(`[PostalAdminAlert] Fallo el envío a ${recipient}: ${sendErr.message}`);
+            }
+        }
+        if (sentCount === 0) {
+            return { success: false, sent: false, message: 'Falló el envío a todos los destinatarios' };
+        }
+        await banners.recordIfShown();
+
+        logger.info(`[PostalAdminAlert] Alerta '${alert.kind}' enviada a ${sentCount}/${recipients.length} destinatario/s (${vars.staleCount} seguimiento/s)`);
+        return { success: true, sent: true, message: `Alerta enviada a ${sentCount} destinatario/s` };
+
+    } catch (error) {
+        logger.error(`[PostalAdminAlert] Error enviando alerta: ${error.message}`);
+        return { success: false, sent: false, message: error.message };
+    }
+}
+
+/**
  * Aviso de seguridad: el usuario conectó una aplicación externa (MCP) a su
  * cuenta vía OAuth. Lo dispara law-analytics-server al aceptar el consent.
  *
@@ -2327,5 +2424,6 @@ module.exports = {
     sendJudicialMovementNotifications,
     sendFolderInactivityNotifications,
     sendPostalNotification,
+    sendPostalAdminAlert,
     sendMcpAppConnectedNotification,
 };

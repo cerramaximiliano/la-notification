@@ -398,6 +398,20 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         safeGuardEnabled: {
             type: Boolean,
             default: true
+        },
+        // Alerta operativa al admin: postal-tracking-service la dispara vía
+        // webhook cuando su worker deja de consultar seguimientos activos
+        // (pipeline roto) y cuando la condición se normaliza.
+        adminAlerts: {
+            enabled: {
+                type: Boolean,
+                default: true
+            },
+            // Destinatarios; vacío = usa env ADMIN_EMAIL del servicio
+            recipients: {
+                type: [String],
+                default: []
+            }
         }
     },
 

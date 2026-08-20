@@ -3,7 +3,7 @@ const router = express.Router();
 const logger = require('../config/logger');
 const { PostalNotification } = require('../models');
 const authMiddleware = require('../middleware/auth');
-const { sendPostalNotification } = require('../services/notifications');
+const { sendPostalNotification, sendPostalAdminAlert } = require('../services/notifications');
 
 /**
  * Webhook de eventos de seguimiento postal (postal-tracking-service).
@@ -85,6 +85,50 @@ router.post('/webhook/events', authMiddleware.verifyServiceToken, async (req, re
 
   } catch (error) {
     logger.error(`[Postal] Error procesando webhook: ${error.message}`);
+    return res.status(500).json({ success: false, sent: false, message: error.message });
+  }
+});
+
+/**
+ * Webhook de ALERTA OPERATIVA al admin (postal-tracking-service).
+ *
+ * El manager del servicio postal lo dispara cuando detecta seguimientos
+ * activos que su worker no consulta hace más de N horas (kind 'stale') y
+ * cuando la condición se normaliza (kind 'recovered'). El anti-spam y la
+ * detección viven en el servicio de origen; acá se resuelve configuración
+ * (destinatarios, enabled), template y banners, y se envía en el acto.
+ *
+ * Body: {
+ *   kind: 'stale' | 'recovered',
+ *   staleAfterHours: Number,
+ *   trackings: [{ codeId, numberId, processingStatus, trackingStatus, lastCheckedAt }],
+ *   activeSince: Date  // solo en 'recovered'
+ * }
+ *
+ * Respuesta: { success, sent } — el origen usa `sent` para decidir si marca
+ * la alerta como notificada o hace fallback a su canal de emergencia (SES
+ * directo con HTML plano).
+ */
+router.post('/webhook/admin-alert', authMiddleware.verifyServiceToken, async (req, res) => {
+  try {
+    const { kind, staleAfterHours, trackings, activeSince } = req.body || {};
+
+    if (!['stale', 'recovered'].includes(kind)) {
+      return res.status(400).json({ success: false, message: "kind debe ser 'stale' o 'recovered'" });
+    }
+    if (kind === 'stale' && (!Array.isArray(trackings) || trackings.length === 0)) {
+      return res.status(400).json({ success: false, message: 'trackings debe ser un array no vacío para kind=stale' });
+    }
+
+    const result = await sendPostalAdminAlert({ kind, staleAfterHours, trackings, activeSince });
+
+    return res.json({
+      success: result.success === true,
+      sent: result.sent === true,
+      message: result.message
+    });
+  } catch (error) {
+    logger.error(`[PostalAdminAlert] Error procesando webhook: ${error.message}`);
     return res.status(500).json({ success: false, sent: false, message: error.message });
   }
 });
