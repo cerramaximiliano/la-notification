@@ -118,6 +118,43 @@ function buildGoogleCalendarBanner(cfg, frontBaseUrl, sourceEmail) {
  *   de email para el tracking del CTA (movimiento, calendar, tasks, ...)
  * @returns {{ templateVars: Object, planBannerShown: boolean, recordIfShown: Function }}
  */
+/**
+ * Ventana de cooldown propia de un banner para el correo que se está por
+ * enviar. Config por banner:
+ *   cooldownDays: ventana default en días (0 = sin cooldown propio)
+ *   cooldownByEmailType: { tipo: días } — override de la ventana según el TIPO
+ *     de correo que se está por enviar (ej: { calendario: 7, movimiento: 30 })
+ */
+function resolveBannerCooldownDays(cfg, sourceEmail, defaultDays) {
+  const byType = cfg && cfg.cooldownByEmailType && typeof cfg.cooldownByEmailType === 'object'
+    ? cfg.cooldownByEmailType
+    : null;
+  if (byType && Number.isFinite(Number(byType[sourceEmail]))) return Number(byType[sourceEmail]);
+  return Number.isFinite(cfg && cfg.cooldownDays) ? cfg.cooldownDays : defaultDays;
+}
+
+/**
+ * ¿Este banner está dentro de su cooldown propio?
+ *
+ * cooldownScope decide qué cuenta como repetición:
+ *   'banner' (default) — lo recibió en CUALQUIER tipo de correo dentro de la
+ *     ventana → no repetir en ninguno.
+ *   'banner-email' — solo cuenta si lo recibió en ESTE mismo tipo de correo:
+ *     puede recibirlo en movimientos y también en calendario, pero no dos
+ *     veces en calendario dentro de la ventana.
+ */
+async function bannerInCooldown(PlanBannerSend, userId, bannerKind, sourceEmail, cfg, defaultDays) {
+  const days = resolveBannerCooldownDays(cfg, sourceEmail, defaultDays);
+  if (!(days > 0)) return false;
+  const query = {
+    userId,
+    bannerKind,
+    sentAt: { $gte: new Date(Date.now() - days * 24 * 3600 * 1000) }
+  };
+  if (cfg && cfg.cooldownScope === 'banner-email') query.emailType = sourceEmail;
+  return Boolean(await PlanBannerSend.exists(query));
+}
+
 /** ¿Este banner puede aparecer en este tipo de email? (config emailTypes) */
 function allowedForType(cfg, sourceEmail) {
   const types = cfg && Array.isArray(cfg.emailTypes) ? cfg.emailTypes : null;
@@ -172,12 +209,10 @@ async function resolveEmailBanners(userId, user, options = {}) {
       const archivedCount = await Folder.countDocuments({ userId, archived: true });
       const minArchived = Number.isFinite(bannerCfg.minArchivedFolders) ? bannerCfg.minArchivedFolders : 1;
       if (archivedCount >= minArchived) {
-        const cooldownDays = Number.isFinite(bannerCfg.cooldownDays) ? bannerCfg.cooldownDays : 7;
-        let inCooldown = false;
-        if (cooldownDays > 0) {
-          const since = new Date(Date.now() - cooldownDays * 24 * 3600 * 1000);
-          inCooldown = Boolean(await PlanBannerSend.exists({ userId, sentAt: { $gte: since } }));
-        }
+        // Antes esta query no filtraba por bannerKind: cualquier banner (incluso
+        // gcal) frenaba al de plan. Ahora el cooldown propio es del banner, con
+        // alcance y ventana configurables.
+        const inCooldown = await bannerInCooldown(PlanBannerSend, userId, 'plan', sourceEmail, bannerCfg, 7);
         if (!inCooldown) {
           const activeCount = await Folder.countDocuments({ userId, archived: { $ne: true } });
           const { suggestPlanUpgrade } = require('./planSuggestion');
@@ -238,13 +273,23 @@ async function resolveEmailBanners(userId, user, options = {}) {
       sharedBlockedFeature = true;
     }
 
-    if (!suppressedByPlan && !sharedBlockedFeature && allowedForType(featureCfg, sourceEmail)) {
+    // Cooldown propio opcional (default 0 = solo rige el compartido).
+    const featureOwnDays = resolveBannerCooldownDays(featureCfg, sourceEmail, 0);
+    let featureOwnBlocked = false;
+    if (featureOwnDays > 0 && !suppressedByPlan && !sharedBlockedFeature) {
+      const { PlanBannerSend } = require('../models');
+      featureOwnBlocked = await bannerInCooldown(PlanBannerSend, userId, 'feature', sourceEmail, featureCfg, 0);
+    }
+
+    if (!suppressedByPlan && !sharedBlockedFeature && !featureOwnBlocked && allowedForType(featureCfg, sourceEmail)) {
       const feature = buildFeatureBanner(featureCfg, frontBase, sourceEmail);
       result.templateVars.featureBannerHtml = feature.html;
       result.templateVars.featureBannerText = feature.text;
       if (feature.html) {
         result.featureBannerShown = true;
-        if (featureParticipates) {
+        // Se registra si participa del compartido O si tiene cooldown propio
+        // (este último depende del registro para funcionar).
+        if (featureParticipates || featureOwnDays > 0) {
           featureBannerMeta = { bannerKind: 'feature', emailType: sourceEmail };
         }
       }
@@ -275,12 +320,9 @@ async function resolveEmailBanners(userId, user, options = {}) {
     if (gcalCfg.enabled !== false && isTarget && !suppressedByOthers && allowedForType(gcalCfg, sourceEmail)) {
       const { PlanBannerSend } = require('../models');
       // Cooldown propio (default 14 días): es una invitación, no un recordatorio.
-      const cooldownDays3 = Number.isFinite(gcalCfg.cooldownDays) ? gcalCfg.cooldownDays : 14;
-      let blocked = false;
-      if (cooldownDays3 > 0) {
-        const since3 = new Date(Date.now() - cooldownDays3 * 24 * 3600 * 1000);
-        blocked = Boolean(await PlanBannerSend.exists({ userId, sentAt: { $gte: since3 }, bannerKind: 'gcal' }));
-      }
+      // Alcance y ventana por tipo de correo configurables (cooldownScope /
+      // cooldownByEmailType).
+      let blocked = await bannerInCooldown(PlanBannerSend, userId, 'gcal', sourceEmail, gcalCfg, 14);
       // Si participa del cooldown compartido, cualquier banner de la ventana lo bloquea.
       if (!blocked && gcalParticipates) {
         const daysShared = Number.isFinite(shared3.days) ? shared3.days : 7;
@@ -377,4 +419,12 @@ function applyBannerFallback(htmlContent, textContent, banners) {
   return { htmlContent, textContent };
 }
 
-module.exports = { resolveEmailBanners, buildFeatureBanner, buildGoogleCalendarBanner, applyBannerFallback };
+module.exports = {
+  resolveEmailBanners,
+  buildFeatureBanner,
+  buildGoogleCalendarBanner,
+  applyBannerFallback,
+  // exportados para pruebas
+  resolveBannerCooldownDays,
+  bannerInCooldown
+};

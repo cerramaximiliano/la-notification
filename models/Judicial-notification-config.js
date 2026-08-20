@@ -311,6 +311,20 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
     // Banner de upgrade de plan en el email de movimientos (usuarios con
     // carpetas archivadas). Aplicado por la-notification en la entrega.
     planBanner: {
+        // Alcance del cooldown propio: 'banner' = lo recibió en cualquier tipo
+        // de correo dentro de la ventana; 'banner-email' = solo cuenta si lo
+        // recibió en este mismo tipo de correo.
+        cooldownScope: {
+            type: String,
+            enum: ['banner', 'banner-email'],
+            default: 'banner'
+        },
+        // Override de la ventana (días) según el tipo de correo a enviar,
+        // ej: { calendario: 7, movimiento: 30 }. null = usa cooldownDays.
+        cooldownByEmailType: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        },
         // On/off global del banner
         enabled: {
             type: Boolean,
@@ -419,6 +433,25 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
     // (todos los tipos). Definido por el admin; por default no se muestra
     // junto al banner de plan para no apilar banners.
     featureBanner: {
+        // Cooldown propio en días (0 = solo rige el compartido)
+        cooldownDays: {
+            type: Number,
+            default: 0
+        },
+        // Alcance del cooldown propio: 'banner' = lo recibió en cualquier tipo
+        // de correo dentro de la ventana; 'banner-email' = solo cuenta si lo
+        // recibió en este mismo tipo de correo.
+        cooldownScope: {
+            type: String,
+            enum: ['banner', 'banner-email'],
+            default: 'banner'
+        },
+        // Override de la ventana (días) según el tipo de correo a enviar,
+        // ej: { calendario: 7, movimiento: 30 }. null = usa cooldownDays.
+        cooldownByEmailType: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        },
         enabled: {
             type: Boolean,
             default: false
@@ -456,6 +489,20 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
     // usuarios con googleCalendarConnected !== true. Defaults espejados en
     // emailBanners.buildGoogleCalendarBanner — cambiarlos acá no alcanza.
     googleCalendarBanner: {
+        // Alcance del cooldown propio: 'banner' = lo recibió en cualquier tipo
+        // de correo dentro de la ventana; 'banner-email' = solo cuenta si lo
+        // recibió en este mismo tipo de correo.
+        cooldownScope: {
+            type: String,
+            enum: ['banner', 'banner-email'],
+            default: 'banner'
+        },
+        // Override de la ventana (días) según el tipo de correo a enviar,
+        // ej: { calendario: 7, movimiento: 30 }. null = usa cooldownDays.
+        cooldownByEmailType: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        },
         enabled: {
             type: Boolean,
             default: true
