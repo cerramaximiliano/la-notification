@@ -284,6 +284,11 @@ function buildSourceDistributionSection(data) {
 function processMorningDigestData(summaries = {}) {
   const num = (v) => (Number.isFinite(v) ? v : 0);
 
+  // OJO con `total{Event,Task,Movement}Notifications` de los summaries: el cron
+  // los define como email + navegador ("Total combinado"). Usarlos en la fila de
+  // email inflaba el número y rompía la lectura del informe — el 20/08 el bloque
+  // Calendario mostraba 4 usuarios / 9 "emails" / 3 alertas, cuando los correos
+  // reales eran 6 (6 + 3 = 9). La fila de email usa emailNotificationsSent.
   const bloques = [
     {
       key: 'calendar',
@@ -292,7 +297,7 @@ function processMorningDigestData(summaries = {}) {
       filas: (s) => [
         ['Usuarios procesados', num(s.usersProcessed)],
         ['Usuarios notificados', num(s.usersNotified)],
-        ['Notificaciones por email', num(s.totalEventNotifications ?? s.emailNotificationsSent)],
+        ['Notificaciones por email', num(s.emailNotificationsSent)],
         ['Alertas de navegador', num(s.totalBrowserAlerts ?? s.browserAlertsSent)]
       ]
     },
@@ -303,7 +308,7 @@ function processMorningDigestData(summaries = {}) {
       filas: (s) => [
         ['Usuarios procesados', num(s.usersProcessed)],
         ['Usuarios notificados', num(s.usersNotified)],
-        ['Notificaciones por email', num(s.totalTaskNotifications ?? s.emailNotificationsSent)],
+        ['Notificaciones por email', num(s.emailNotificationsSent)],
         ['Alertas de navegador', num(s.totalBrowserAlerts ?? s.browserAlertsSent)]
       ]
     },
@@ -314,7 +319,7 @@ function processMorningDigestData(summaries = {}) {
       filas: (s) => [
         ['Usuarios procesados', num(s.usersProcessed)],
         ['Usuarios notificados', num(s.usersNotified)],
-        ['Notificaciones por email', num(s.totalMovementNotifications ?? s.emailNotificationsSent)],
+        ['Notificaciones por email', num(s.emailNotificationsSent)],
         ['Alertas de navegador', num(s.totalBrowserAlerts ?? s.browserAlertsSent)]
       ]
     },
