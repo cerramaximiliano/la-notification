@@ -19,6 +19,8 @@ function pill(text, bg, color, border) {
  */
 function processEventsData(events, user, folderMap = new Map()) {
   const baseUrl = (process.env.BASE_URL || 'https://www.lawanalytics.app').replace(/\/$/, '');
+  // Debe matchear /^email_[a-z0-9_]{2,60}$/ del backend (emailEngagementRoutes).
+  const CALENDAR_CTA_SOURCE = 'email_calendario_cta';
   let eventsTableHtml = '';
   let eventsListText = '';
 
@@ -51,9 +53,18 @@ function processEventsData(events, user, folderMap = new Map()) {
     // El deep-link ?movement=...&open=1 es el mismo que usa el botón
     // "Ir al movimiento" del calendario: resalta la fila y abre el visor.
     const folder = event.folderId ? folderMap.get(String(event.folderId)) : null;
-    const folderUrl = event.folderId ? `${baseUrl}/apps/folders/details/${encodeURIComponent(event.folderId)}` : null;
+    // Base SIN query string: `movementUrl` se arma encima y necesita abrir el
+    // suyo con `?`. Si el source se pegara acá, quedaría un `?` duplicado.
+    const folderUrlBase = event.folderId ? `${baseUrl}/apps/folders/details/${encodeURIComponent(event.folderId)}` : null;
+    // Atribución de la visita: el front (EmailVisitTracker) ve el ?source= con
+    // sesión activa y postea a /api/email-engagement/visit → emailvisitevents.
+    // Sin esto el correo de calendario no tenía forma de registrar clicks: es
+    // el mismo patrón que ya usa el de seguimiento postal.
+    const folderUrl = folderUrlBase ? `${folderUrlBase}?source=${CALENDAR_CTA_SOURCE}` : null;
     const movementUrl =
-      event.folderId && event.movementRef ? `${folderUrl}?movement=${encodeURIComponent(event.movementRef)}&open=1` : null;
+      folderUrlBase && event.movementRef
+        ? `${folderUrlBase}?movement=${encodeURIComponent(event.movementRef)}&open=1&source=${CALENDAR_CTA_SOURCE}`
+        : null;
 
     let contextRowHtml = '';
     if (folder) {
