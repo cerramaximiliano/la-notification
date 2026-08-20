@@ -1,4 +1,4 @@
-const { NotificationLog, Event, Task, Movement } = require('../models');
+const { NotificationLog, Event, Task, Movement, PostalNotification } = require('../models');
 const logger = require('../config/logger');
 const moment = require('moment-timezone');
 
@@ -32,6 +32,9 @@ const getNotificationDetail = async (req, res) => {
           break;
         case 'movement':
           entity = await Movement.findById(notification.entityId).lean();
+          break;
+        case 'postal':
+          entity = await PostalNotification.findById(notification.entityId).lean();
           break;
       }
     } catch (err) {

@@ -2189,16 +2189,26 @@ async function sendPostalNotification({ notification }) {
 
         const adjusted = applyBannerFallback(htmlContent, textContent, banners);
 
-        await sendEmail(user.email, subject, adjusted.htmlContent, adjusted.textContent);
+        // Capturar el MessageId de SES para poder correlacionar bounces,
+        // igual que en movimientos judiciales.
+        const sesResultPostal = await sendEmail(user.email, subject, adjusted.htmlContent, adjusted.textContent);
         await banners.recordIfShown();
         await marcar('sent', `Notificación postal enviada a ${user.email} (${vars.eventsCount} evento/s)`);
 
         try {
-            await NotificationLog.createFromEntity('custom', notification, {
+            // El doc postal no tiene title/description: se arma un snapshot con
+            // el código de envío para que la fila del historial sea legible.
+            const postalEntity = {
+                _id: notification._id,
+                userId: notification.userId,
+                title: `Envío ${vars.trackingCode} — ${vars.eventsCount} novedad(es)`,
+                type: 'postal'
+            };
+            await NotificationLog.createFromEntity('postal', postalEntity, {
                 method: 'email',
                 status: 'sent',
                 content: { subject, message: adjusted.htmlContent, template: 'postal-tracking-update' },
-                delivery: { recipientEmail: user.email },
+                delivery: { recipientEmail: user.email, sesMessageId: sesResultPostal?.MessageId || null },
                 metadata: { source: notification.source || 'webhook', trackingCode: vars.trackingCode },
                 sentAt: new Date()
             }, user._id);
