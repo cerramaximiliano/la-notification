@@ -87,6 +87,19 @@ const notificationLogSchema = new mongoose.Schema({
       complaint: { type: Boolean },
       recipientEmail: String,
       recipientPhone: String
+    },
+
+    // Engagement reportado por SES (eventos Open/Click del Configuration Set).
+    // Las aperturas vía píxel SOBRE-CUENTAN: los proxies de Gmail/Apple
+    // pre-cargan imágenes — tomarlas como cota superior. Los clicks sí son
+    // confiables (SES envuelve los links y registra el click real).
+    engagement: {
+      opens: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      firstOpenAt: Date,
+      lastOpenAt: Date,
+      lastClickAt: Date,
+      lastClickUrl: String
     }
   },
   

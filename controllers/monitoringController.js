@@ -501,7 +501,10 @@ const getNotificationHistory = async (req, res) => {
           failureReason: log.notification.delivery?.failureReason,
           recipientEmail: log.notification.delivery?.recipientEmail,
           recipientPhone: log.notification.delivery?.recipientPhone
-        }
+        },
+        // Aperturas/clicks reportados por SES. Las aperturas sobre-cuentan
+        // (proxies de Gmail/Apple); los clicks son confiables.
+        engagement: log.notification.engagement || null
       },
       // Configuración utilizada
       config: log.config,

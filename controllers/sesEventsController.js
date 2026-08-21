@@ -93,6 +93,41 @@ const procesarEvento = async (message) => {
         "DeliveryDelay"
       );
 
+    // Engagement (habilitado 2026-08-21 agregando OPEN/CLICK al Configuration
+    // Set). Necesitan $inc/$min además de $set, así que no usan actualizarLog.
+    case "Open": {
+      if (!messageId) return false;
+      const ts = new Date(message.open?.timestamp || Date.now());
+      const res = await NotificationLog.updateMany(
+        { "notification.delivery.sesMessageId": messageId },
+        {
+          $inc: { "notification.engagement.opens": 1 },
+          $set: { "notification.engagement.lastOpenAt": ts },
+          // $min crea el campo si no existe: registra la primera apertura.
+          $min: { "notification.engagement.firstOpenAt": ts }
+        }
+      );
+      if (res.modifiedCount > 0) logger.info(`SES Open: ${res.modifiedCount} log(s) [${messageId}]`);
+      return res.modifiedCount > 0;
+    }
+
+    case "Click": {
+      if (!messageId) return false;
+      const ts = new Date(message.click?.timestamp || Date.now());
+      const res = await NotificationLog.updateMany(
+        { "notification.delivery.sesMessageId": messageId },
+        {
+          $inc: { "notification.engagement.clicks": 1 },
+          $set: {
+            "notification.engagement.lastClickAt": ts,
+            "notification.engagement.lastClickUrl": (message.click?.link || "").slice(0, 500)
+          }
+        }
+      );
+      if (res.modifiedCount > 0) logger.info(`SES Click: ${res.modifiedCount} log(s) [${messageId}] -> ${message.click?.link || "?"}`);
+      return res.modifiedCount > 0;
+    }
+
     default:
       logger.debug(`SES: evento ignorado (${tipo})`);
       return false;
