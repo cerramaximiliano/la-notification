@@ -76,7 +76,7 @@ const EventSchema = new Schema(
     },
     movementSource: {
       type: String,
-      enum: ["pjn", "mev", "scba", "eje", "manual", null],
+      enum: ["pjn", "mev", "scba", "eje", "pjsalta", "manual", null],
       required: false,
     },
     userId: {

@@ -30,7 +30,8 @@ const judicialMovementSchema = new mongoose.Schema({
     detalle: { type: String, required: true },
     url: String,
     // Referencia del movimiento dentro de su fuente (v2 multi-fuente):
-    // scba → sourceId del mirror scba-movements; eje → actId; mev → _id.
+    // scba → sourceId del mirror scba-movements; eje → actId; mev → _id;
+    // pjsalta → `numero` de la actuación del portal IOL.
     // Habilita el link /m/:token para movimientos de texto sin url.
     sourceRef: String,
     // true si el documento de la actuación ya está en nuestro S3 (hoy solo EJE).
@@ -42,10 +43,10 @@ const judicialMovementSchema = new mongoose.Schema({
   },
 
   // Fuente del movimiento: 'pjn' (default — coordinator PJN no lo setea),
-  // 'scba' | 'eje' | 'mev' (webhook de los workers).
+  // 'scba' | 'eje' | 'mev' | 'pjsalta' (webhook de los workers).
   source: {
     type: String,
-    enum: ['pjn', 'scba', 'eje', 'mev'],
+    enum: ['pjn', 'scba', 'eje', 'mev', 'pjsalta'],
     default: 'pjn'
   },
   
