@@ -152,7 +152,9 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             tipo: movimiento.tipo,
             detalle: movimiento.detalle,
             url: movimiento.url,
-            sourceRef: movimiento.sourceRef
+            sourceRef: movimiento.sourceRef,
+            hasPdf: movimiento.hasPdf,
+            esSentencia: movimiento.esSentencia
           };
           if (movement.source) {
             existingMovement.source = movement.source;
@@ -191,7 +193,9 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               tipo: movimiento.tipo,
               detalle: movimiento.detalle,
               url: movimiento.url,
-              sourceRef: movimiento.sourceRef
+              sourceRef: movimiento.sourceRef,
+              hasPdf: movimiento.hasPdf,
+              esSentencia: movimiento.esSentencia
             },
             source: movement.source || 'pjn',
             notificationSettings: {

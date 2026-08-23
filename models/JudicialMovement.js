@@ -32,7 +32,13 @@ const judicialMovementSchema = new mongoose.Schema({
     // Referencia del movimiento dentro de su fuente (v2 multi-fuente):
     // scba → sourceId del mirror scba-movements; eje → actId; mev → _id.
     // Habilita el link /m/:token para movimientos de texto sin url.
-    sourceRef: String
+    sourceRef: String,
+    // true si el documento de la actuación ya está en nuestro S3 (hoy solo EJE).
+    // Cambia el texto del botón del email: prometer "Ver documento" cuando lo
+    // que hay es el resumen del trámite es peor que no prometerlo.
+    hasPdf: Boolean,
+    // Marca las resoluciones/sentencias, para destacarlas en el template.
+    esSentencia: Boolean
   },
 
   // Fuente del movimiento: 'pjn' (default — coordinator PJN no lo setea),

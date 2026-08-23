@@ -177,6 +177,10 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
       //   - PJN (con url): token v1, botón "Ver documento" (PDF desde S3).
       //   - Fuentes de texto (scba/eje/mev con sourceRef): token v2, botón
       //     "Ver movimiento" (vista de lectura del texto).
+      //   - EJE con hasPdf: el documento de la actuación ya está en nuestro S3,
+      //     así que el visor lo muestra de verdad → "Ver documento". Prometer
+      //     un documento cuando lo que hay es el resumen del trámite hace que
+      //     el usuario abra el mail y no encuentre lo que esperaba.
       // Si el flag está OFF o falla la firma, cae a la URL original del portal.
       const portalUrl = movement.movimiento.url;
       const movSource = movement.source && movement.source !== 'pjn' ? movement.source : null;
@@ -194,7 +198,7 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
               ref: sourceRef,
             });
             docUrl = `${frontBaseUrl}/m/${token}?source=email_movimiento`;
-            docLabel = 'Ver movimiento';
+            docLabel = movement.movimiento.hasPdf ? 'Ver documento' : 'Ver movimiento';
             if (!firstToken) firstToken = token;
           } else if (portalUrl) {
             const token = signMovementToken({ causaId: expediente.id, userId: movement.userId, url: portalUrl });
