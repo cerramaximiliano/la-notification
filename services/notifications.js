@@ -285,7 +285,7 @@ async function sendMovementNotifications({
         let sesMessageId = null;
 
         try {
-            const sesResult = await sendEmail(user.email, subject, htmlContent, textContent);
+            const sesResult = await sendEmail(user.email, subject, htmlContent, textContent, { templateName: 'movement-notification', metadata: { userId: user._id } });
             sesMessageId = sesResult?.MessageId || null;
             await banners.recordIfShown();
         } catch (emailError) {
@@ -614,7 +614,7 @@ async function sendCalendarNotifications({
         logger.info('Usando template de base de datos para notificaciones de calendario');
         
         // Enviar el correo electrónico
-        const sesResultCal = await sendEmail(user.email, subject, htmlContent, textContent);
+        const sesResultCal = await sendEmail(user.email, subject, htmlContent, textContent, { templateName: 'calendar-events', metadata: { userId: user._id } });
         await banners.recordIfShown();
 
         // Registrar en NotificationLog (faltaba: sin esto los envíos de
@@ -908,7 +908,7 @@ async function sendTaskNotifications({
         logger.info('Usando template de base de datos para notificaciones de tareas');
         
         // Enviar el correo electrónico (ya no necesita generateEmailTemplate porque el template incluye todo)
-        const sesResultTasks = await sendEmail(user.email, subject, htmlContent, textContent);
+        const sesResultTasks = await sendEmail(user.email, subject, htmlContent, textContent, { templateName: 'task-reminder', metadata: { userId: user._id } });
         await banners.recordIfShown();
 
         // Registrar en NotificationLog (faltaba, igual que en calendario).
@@ -1578,7 +1578,7 @@ async function sendJudicialMovementNotifications({
         let sesMessageId = null;
 
         try {
-            const sesResult = await sendEmail(user.email, subject, htmlContent, textContent);
+            const sesResult = await sendEmail(user.email, subject, htmlContent, textContent, { templateName: 'judicial-movement', metadata: { userId: user._id } });
             sesMessageId = sesResult?.MessageId || null;
         } catch (emailError) {
             emailStatus = 'failed';
@@ -1970,7 +1970,7 @@ async function sendFolderInactivityNotifications({
                 const processedTemplate = await getProcessedTemplate('notification', 'folder-caducity', templateVariables);
                 const adjusted = applyFallbackInactivity(processedTemplate.html, processedTemplate.text, inactivityBanners);
 
-                await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent);
+                await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent, { templateName: 'folder-caducity', metadata: { userId: user._id } });
                 await recordInactivityBanner();
 
                 // Registrar en NotificationLog (era el último flujo sin rastro)
@@ -2020,7 +2020,7 @@ async function sendFolderInactivityNotifications({
                 const processedTemplate = await getProcessedTemplate('notification', 'folder-prescription', templateVariables);
                 const adjusted = applyFallbackInactivity(processedTemplate.html, processedTemplate.text, inactivityBanners);
 
-                await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent);
+                await sendEmail(user.email, processedTemplate.subject, adjusted.htmlContent, adjusted.textContent, { templateName: 'folder-prescription', metadata: { userId: user._id } });
                 await recordInactivityBanner();
 
                 // Registrar en NotificationLog (era el último flujo sin rastro)
@@ -2191,7 +2191,7 @@ async function sendPostalNotification({ notification }) {
 
         // Capturar el MessageId de SES para poder correlacionar bounces,
         // igual que en movimientos judiciales.
-        const sesResultPostal = await sendEmail(user.email, subject, adjusted.htmlContent, adjusted.textContent);
+        const sesResultPostal = await sendEmail(user.email, subject, adjusted.htmlContent, adjusted.textContent, { templateName: 'postal-notification', metadata: { userId: user._id } });
         await banners.recordIfShown();
         await marcar('sent', `Notificación postal enviada a ${user.email} (${vars.eventsCount} evento/s)`);
 

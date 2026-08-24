@@ -13,7 +13,34 @@ const logger = require("../config/logger");
 // RECHAZA el envío, así que el default es el verificado en us-east-1.
 const CONFIGURATION_SET = process.env.SES_CONFIGURATION_SET || "notificaciones-judiciales";
 
-const sendEmail = async (to, subject, htmlBody, textBody) => {
+// Auditoría central del ecosistema: cada envío queda en `emaillogs` (misma
+// colección/shape que usan los workers y el hub), además del NotificationLog
+// propio de cada flujo. Fire-and-forget: nunca frena ni propaga al caller.
+const logEmailSent = async ({ to, subject, templateName, templateCategory, sesMessageId, status, errorMessage, metadata }) => {
+  try {
+    const mongoose = require("mongoose");
+    if (mongoose.connection?.readyState !== 1 || !mongoose.connection.db) return;
+    await mongoose.connection.db.collection("emaillogs").insertOne({
+      to: (to || "").toLowerCase().trim(),
+      userId: metadata?.userId || null,
+      subject,
+      templateCategory: templateCategory || "notification",
+      templateName: templateName || "la-notification",
+      sesMessageId: sesMessageId || null,
+      status,
+      errorMessage: errorMessage || null,
+      metadata: metadata || {},
+      source: "la-notification",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (err) {
+    logger.warn(`[emaillog] no se pudo registrar el envío a ${to}: ${err.message}`);
+  }
+};
+
+// `logMeta` (opcional): { templateName, templateCategory, metadata } para emaillogs.
+const sendEmail = async (to, subject, htmlBody, textBody, logMeta = {}) => {
   const params = {
     Source: "Law||Analytics <soporte@lawanalytics.app>", // Correo verificado en AWS SES
     ConfigurationSetName: CONFIGURATION_SET,
@@ -42,9 +69,11 @@ const sendEmail = async (to, subject, htmlBody, textBody) => {
     const command = new SendEmailCommand(params);
     const result = await sesClient.send(command);
     logger.info(`Correo enviado a ${to} (MessageId: ${result?.MessageId || 'sin-id'})`);
+    await logEmailSent({ to, subject, ...logMeta, sesMessageId: result?.MessageId, status: "sent" });
     return result;
   } catch (error) {
     logger.error(`Error al enviar correo a ${to}:`, error);
+    await logEmailSent({ to, subject, ...logMeta, status: "failed", errorMessage: error.message });
     throw error;
   }
 };
