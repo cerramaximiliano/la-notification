@@ -515,9 +515,10 @@ function buildConfigSummarySection(config) {
     ['eje-update-worker', 'EJE — update', { firstSyncPolicy: 'silent-baseline' }],
     ['eje-stuck-worker', 'EJE — stuck (first-touch)', { firstSyncPolicy: 'silent-baseline' }],
     ['pjsalta-update-worker', 'PJ Salta — update', { firstSyncPolicy: 'silent-baseline' }],
-    ['pjcatamarca-update-worker', 'PJ Catamarca — update', { firstSyncPolicy: 'silent-baseline' }]
+    ['pjcatamarca-update-worker', 'PJ Catamarca — update', { firstSyncPolicy: 'silent-baseline' }],
+    ['pjmendoza-update-worker', 'PJ Mendoza — update', { firstSyncPolicy: 'silent-baseline' }]
   ];
-  const DELIVERY = [['pjn', 'PJN'], ['eje', 'EJE'], ['mev', 'MEV'], ['scba', 'SCBA'], ['pjsalta', 'PJ Salta'], ['pjcatamarca', 'PJ Catamarca']];
+  const DELIVERY = [['pjn', 'PJN'], ['eje', 'EJE'], ['mev', 'MEV'], ['scba', 'SCBA'], ['pjsalta', 'PJ Salta'], ['pjcatamarca', 'PJ Catamarca'], ['pjmendoza', 'PJ Mendoza']];
 
   const deliveryResolved = DELIVERY.map(([key, label]) => ({ key, label, ...resolve(key) }));
   const allWeekendSend = deliveryResolved.every(d => d.offDayMode === 'send');
