@@ -143,6 +143,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             id: expediente.id,
             number: expediente.number,
             year: expediente.year,
+            label: expediente.label || undefined,
             fuero: expediente.fuero,
             caratula: expediente.caratula,
             objeto: expediente.objeto
@@ -184,6 +185,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               id: expediente.id,
               number: expediente.number,
               year: expediente.year,
+              label: expediente.label || undefined,
               fuero: expediente.fuero,
               caratula: expediente.caratula,
               objeto: expediente.objeto

@@ -18,6 +18,11 @@ const judicialMovementSchema = new mongoose.Schema({
     id: { type: String, required: true }, // ID del expediente en el sistema principal
     number: { type: Number },
     year: { type: Number },
+    // Identificador legible que manda el worker (EJE por CUIJ, Salta
+    // "EXP 959839/26", Catamarca/Mendoza CUIJ). Tiene prioridad sobre
+    // number/year en títulos y asuntos; sin él, causas sin número clásico
+    // se mostraban como "Expediente 0/0".
+    label: { type: String },
     fuero: { type: String, required: true },
     caratula: { type: String, required: true },
     objeto: String

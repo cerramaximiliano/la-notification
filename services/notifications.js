@@ -1706,9 +1706,7 @@ async function sendJudicialMovementNotifications({
                     },
                     metadata: {
                         source: 'cron',
-                        expediente: movement.expediente.year != null && movement.expediente.year !== ''
-                            ? `${movement.expediente.number}/${movement.expediente.year}`
-                            : `${movement.expediente.number ?? ''}`.trim() || '(sin nº)'
+                        expediente: require('./templateProcessor').expedienteLabel(movement.expediente)
                     },
                     sentAt: new Date()
                 }, user._id);

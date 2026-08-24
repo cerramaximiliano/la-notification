@@ -18,6 +18,22 @@ const DEFAULT_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'https://server.l
  * @param {Object} data - Objeto con los valores para reemplazar
  * @returns {string} - Template procesado
  */
+
+// Etiqueta legible del expediente para títulos/asuntos. Precedencia:
+// `label` (lo manda el worker según la identidad de su jurisdicción) →
+// number/year (PJN/MEV/SCBA) → number → "(sin nº)". Sin esto, causas
+// halladas por CUIJ (EJE, Catamarca, Mendoza) salían como "Expediente 0/0".
+function expedienteLabel(expediente = {}) {
+  if (expediente.label && String(expediente.label).trim()) return String(expediente.label).trim();
+  const n = Number(expediente.number);
+  const hasNumber = Number.isFinite(n) && n > 0;
+  const y = expediente.year;
+  const hasYear = y != null && y !== '' && Number(y) > 0;
+  if (hasNumber && hasYear) return `${expediente.number}/${expediente.year}`;
+  if (hasNumber) return `${expediente.number}`;
+  return '(sin nº)';
+}
+
 function processTemplate(template, data) {
   let processed = template;
 
@@ -232,11 +248,7 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
       }
     });
     
-    // Formato "number/year" cuando hay year, sólo "number" cuando no.
-    // Algunas fuentes (causas SCBA con numeración vieja) no tienen year.
-    const numberYear = expediente.year != null && expediente.year !== ''
-      ? `${expediente.number}/${expediente.year}`
-      : `${expediente.number ?? ''}`.trim() || '(sin nº)';
+    const numberYear = expedienteLabel(expediente);
 
     // CTA por card a la causa en la app (si el caller resolvió el folder).
     const folderId = folderIdByExpediente[key];
@@ -370,9 +382,7 @@ function processJudicialCedulasData(cedulasByExpediente) {
       cedulasText += `- ${fecha}: ${tipo} - ${detalle}\n`;
     });
 
-    const numberYear = expediente.year != null && expediente.year !== ''
-      ? `${expediente.number}/${expediente.year}`
-      : `${expediente.number ?? ''}`.trim() || '(sin nº)';
+    const numberYear = expedienteLabel(expediente);
 
     cedulasHtml += processTemplate(expedienteTemplate, {
       numberYear,
@@ -496,6 +506,7 @@ function buildNotificationOptionsBanner(cfg, frontBaseUrl, sourceEmail = 'movimi
 }
 
 module.exports = {
+  expedienteLabel,
   processTemplate,
   getProcessedTemplate,
   processJudicialMovementsData,
