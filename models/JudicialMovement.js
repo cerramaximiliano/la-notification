@@ -46,7 +46,7 @@ const judicialMovementSchema = new mongoose.Schema({
   // 'scba' | 'eje' | 'mev' | 'pjsalta' (webhook de los workers).
   source: {
     type: String,
-    enum: ['pjn', 'scba', 'eje', 'mev', 'pjsalta'],
+    enum: ['pjn', 'scba', 'eje', 'mev', 'pjsalta', 'pjcatamarca'],
     default: 'pjn'
   },
   
