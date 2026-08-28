@@ -6,6 +6,12 @@ const { enrichWithUserInfo } = require('../utils/userHelper');
 // Configurar zona horaria
 const timezone = 'America/Argentina/Buenos_Aires';
 
+// Límite de usuarios a resolver cuando se filtra por email parcial
+const USER_EMAIL_MATCH_LIMIT = 200;
+
+// Escapa los metacaracteres para poder usar input del usuario en un RegExp
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Helper para obtener información de usuario para notificación
 const getUserNotificationInfo = async (userId) => {
   const user = await User.findById(userId).select('name email notificationPreferences');
@@ -407,6 +413,7 @@ const getNotificationHistory = async (req, res) => {
     const { 
       type, // 'event', 'task', 'movement', 'alert', 'custom'
       userId,
+      email, // Búsqueda parcial por email del destinatario
       startDate,
       endDate,
       limit = 100,
@@ -429,7 +436,24 @@ const getNotificationHistory = async (req, res) => {
     if (entityId) query.entityId = entityId;
     if (status) query['notification.status'] = status;
     if (method) query['notification.method'] = method;
-    
+
+    // Filtrar por email del destinatario: matchea contra el email del usuario
+    // (resolviendo los ids en la colección de usuarios) y contra el email al
+    // que efectivamente se envió el correo, que puede diferir del de la cuenta.
+    if (email && email.trim()) {
+      const emailRegex = new RegExp(escapeRegex(email.trim()), 'i');
+      const matchingUsers = await User.find({ email: emailRegex })
+        .select('_id')
+        .limit(USER_EMAIL_MATCH_LIMIT)
+        .lean();
+
+      const emailConditions = [{ 'notification.delivery.recipientEmail': emailRegex }];
+      if (matchingUsers.length > 0) {
+        emailConditions.push({ userId: { $in: matchingUsers.map((u) => u._id) } });
+      }
+      query.$or = emailConditions;
+    }
+
     // Filtrar por fechas
     if (startDate || endDate) {
       query.sentAt = {};
@@ -537,6 +561,7 @@ const getNotificationHistory = async (req, res) => {
       filters: {
         applied: {
           ...(userId && { userId }),
+          ...(email && { email }),
           ...(type && { type }),
           ...(entityId && { entityId }),
           ...(status && { status }),
