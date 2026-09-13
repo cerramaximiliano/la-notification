@@ -43,6 +43,10 @@ const whatsAppInstanceSchema = new mongoose.Schema({
   },
   warmupStartedAt: Date,
   notes: String,
+  // Último connection.update recibido por el webhook (routes/whatsappWebhook.js):
+  // el status pasa solo a connected/disconnected/banned según el evento.
+  lastConnectionChange: Date,
+  lastConnectionReason: String,
 }, {
   timestamps: true,
   collection: 'whatsapp-instances',

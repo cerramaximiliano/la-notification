@@ -61,12 +61,26 @@
 - `NotificationLog.js`: enum `method` += `"whatsapp"`.
 - Respetar preferencias por tipo de evento existentes.
 
-### F4 — Webhook inbound
-- `routes/whatsappWebhook.js` montado en `/api/whatsapp` (`app.js`).
-- GET verify challenge (Meta) / firma (Twilio).
-- POST: delivery receipts (`sent`→`delivered`→`read` en outbox + NotificationLog) y
-  opt-out ("STOP"/"BAJA" → `whatsappOptIn.revokedAt` + desactivar canal).
-- Exposición pública vía NGINX en worker-003 (coordinar vhost).
+### F4 — Webhook inbound · **implementado 2026-09-13**
+- `routes/whatsappWebhook.js` + `controllers/whatsappWebhookController.js`, montado en
+  `POST /api/whatsapp/webhook` (`app.js`). Auth fail-closed por `apikey` (header o campo del
+  body) contra `EVOLUTION_WEBHOOK_APIKEY`. Responde siempre 200 al provider (salvo auth).
+- `messages.update`: `sent`→`delivered`→`read` en `WhatsAppOutbox` + `NotificationLog`
+  (correlación por `providerMessageId`; la lectura va a `engagement.firstOpenAt/lastOpenAt`).
+- `messages.upsert` de un usuario (match por `User.phone`): `BAJA`/`STOP`/`CANCELAR`/... →
+  `whatsappOptIn.revokedAt` + `channels.whatsapp=false` **siempre** (aunque el canal esté
+  apagado), descarta lo pendiente en el outbox y confirma por la misma línea; cualquier otro
+  texto → respuesta automática ("este número no recibe consultas, BAJA para salir") como
+  mucho una vez por día. Números desconocidos y grupos: ignorados, sin responder.
+- `connection.update`: `close` → `disconnected` (403 → `banned`), `open` → `connected`, en
+  `WhatsAppInstance` + invalidación de cache — la línea sale/vuelve a rotación sola.
+- La confirmación de opt-in NO va por chat: se hace en la app (F0, `acceptOptIn` al
+  confirmar el código). El chat solo maneja la baja.
+- **Configuración manual pendiente** (cuando exista la instancia): en Evolution, webhook URL
+  `https://notifications.lawanalytics.app/api/whatsapp/webhook`, eventos `MESSAGES_UPSERT`,
+  `MESSAGES_UPDATE`, `CONNECTION_UPDATE`, sin base64 de media; `EVOLUTION_WEBHOOK_APIKEY` en el
+  secret con el valor que Evolution manda en `apikey`. Verificar que el vhost NGINX de
+  worker-003 proxyee ese path.
 
 ### F5 — Frontend
 - `law-analytics-front` `TabSettings.tsx`: toggle de canal WhatsApp + UI de verificación de

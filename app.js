@@ -90,6 +90,12 @@ const initializeApp = async () => {
         const sesEventsRoutes = require('./routes/sesEvents');
         app.use('/api/ses-events', sesEventsRoutes);
 
+        // Canal WhatsApp — webhook inbound de Evolution API (bajas por chat,
+        // estados de entrega, líneas caídas). Auth propia por apikey; se monta
+        // antes del router interno para que el path no lo capture aquel.
+        const whatsappWebhookRoutes = require('./routes/whatsappWebhook');
+        app.use('/api/whatsapp/webhook', whatsappWebhookRoutes);
+
         // Canal WhatsApp — endpoints internos para el hub (envío síncrono del
         // OTP de verificación de teléfono, disponibilidad del canal).
         const whatsappRoutes = require('./routes/whatsapp');

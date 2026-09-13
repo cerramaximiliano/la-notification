@@ -64,4 +64,23 @@ function buildOtpText(code) {
   ].join('\n');
 }
 
-module.exports = { buildMovementDigestText, buildOtpText };
+/** Respuesta a una baja por chat (BAJA/STOP). */
+function buildOptOutConfirmationText() {
+  return 'Listo, no vas a recibir más avisos por WhatsApp. Podés volver a activarlos cuando quieras desde tu configuración en Law||Analytics.';
+}
+
+/**
+ * Respuesta automática a cualquier otro mensaje de un usuario conocido: este
+ * número no atiende consultas. Como mucho una vez por día por usuario.
+ */
+function buildAutoReplyText(name) {
+  const saludo = name ? `Hola ${name}.` : 'Hola.';
+  return [
+    `${saludo} Este número solo envía los avisos automáticos de Law||Analytics y no recibe consultas.`,
+    '',
+    'Si no querés recibir más avisos por WhatsApp, respondé *BAJA*.',
+    `Para gestionar tus notificaciones: ${DEFAULT_FRONT_BASE_URL}/apps/profiles/user/settings?source=whatsapp_autoreply`,
+  ].join('\n');
+}
+
+module.exports = { buildMovementDigestText, buildOtpText, buildOptOutConfirmationText, buildAutoReplyText };
