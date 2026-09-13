@@ -51,7 +51,7 @@ const whatsAppOutboxSchema = new mongoose.Schema({
 
   entityType: {
     type: String,
-    enum: ['judicial_movement', 'task', 'event', 'inactivity', 'seclo'],
+    enum: ['judicial_movement', 'task', 'event', 'inactivity', 'seclo', 'otp'],
   },
   entityId: {
     type: mongoose.Schema.Types.ObjectId,

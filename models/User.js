@@ -74,7 +74,10 @@ const UserPreferencesSchema = new Schema({
     channels: {
       email: { type: Boolean, default: true },
       browser: { type: Boolean, default: true },
-      mobile: { type: Boolean, default: true }
+      mobile: { type: Boolean, default: true },
+      // Canal WhatsApp (opt-in, default false). Lo escribe el hub; acá solo se
+      // lee para decidir si el digest de movimientos también sale por WhatsApp.
+      whatsapp: { type: Boolean, default: false }
     },
 
     // Notificaciones de usuario
@@ -204,6 +207,29 @@ const UserSchema = new Schema(
     googleCalendarConnected: {
       type: Boolean,
       default: false
+    },
+
+    // Espejo del hub (law-analytics-server/models/User.js): teléfono verificado
+    // por WhatsApp y consentimiento del canal. Solo lectura de este lado — el
+    // dispatcher exige phoneVerified + optIn vigente + channels.whatsapp antes
+    // de encolar. Sin estos campos en el schema, Mongoose los descarta al leer.
+    phone: {
+      type: String,
+      default: null
+    },
+    phoneVerified: {
+      type: Boolean,
+      default: false
+    },
+    phoneVerifiedAt: {
+      type: Date,
+      default: null
+    },
+    whatsappOptIn: {
+      accepted: { type: Boolean, default: false },
+      acceptedAt: { type: Date, default: null },
+      source: { type: String, default: null },
+      revokedAt: { type: Date, default: null }
     },
   },
   {

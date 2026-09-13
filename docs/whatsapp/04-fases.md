@@ -13,10 +13,12 @@
 
 ## Fases
 
-### F0 — Prerrequisitos de datos y compliance · **bloqueante**
-- `phone` / `phoneVerified` / `whatsappOptIn` + `channels.whatsapp` en `User` (hub + espejo).
-- Flujo OTP (start/confirm) + rate limit.
-- Validación: no activar `channels.whatsapp` sin verificación + opt-in.
+### F0 — Prerrequisitos de datos y compliance · **implementado 2026-09-13**
+- `phone` / `phoneVerified` / `whatsappOptIn` + `channels.whatsapp` en `User` (hub + espejo). ✔
+- Flujo OTP (`/api/phone/verify/start|confirm`) + rate limit (3/h por user + cooldown 60s). ✔
+- Validación: no activar `channels.whatsapp` sin verificación + opt-in. ✔
+- El envío del código lo hace la-notification (`POST /api/whatsapp/send-otp`, texto libre por
+  Evolution API — sin plantilla HSM). Sin línea conectada responde 503 con motivo.
 - Detalle: [`01-prerequisitos-otp.md`](./01-prerequisitos-otp.md).
 
 ### F1 — Línea(s) propia(s) + instancia(s) Evolution API

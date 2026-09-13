@@ -52,4 +52,16 @@ function buildMovementDigestText(movementsByExpediente, options = {}) {
   return lines.join('\n');
 }
 
-module.exports = { buildMovementDigestText };
+/**
+ * Código de verificación del teléfono (flujo de alta del canal, Milestone 2).
+ * Es el primer mensaje que recibe ese número — corto, sin links, sin marketing.
+ */
+function buildOtpText(code) {
+  return [
+    `Tu código de verificación de Law||Analytics es *${code}*.`,
+    '',
+    'Vence en 10 minutos. Si no pediste este código, ignorá este mensaje.',
+  ].join('\n');
+}
+
+module.exports = { buildMovementDigestText, buildOtpText };

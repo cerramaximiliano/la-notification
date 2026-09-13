@@ -90,6 +90,11 @@ const initializeApp = async () => {
         const sesEventsRoutes = require('./routes/sesEvents');
         app.use('/api/ses-events', sesEventsRoutes);
 
+        // Canal WhatsApp — endpoints internos para el hub (envío síncrono del
+        // OTP de verificación de teléfono, disponibilidad del canal).
+        const whatsappRoutes = require('./routes/whatsapp');
+        app.use('/api/whatsapp', whatsappRoutes);
+
         // Configurar rutas de eventos de carpetas (WebSocket relay)
         const folderEventRoutes = require('./routes/folderEvents');
         app.use('/api/folder-events', folderEventRoutes);

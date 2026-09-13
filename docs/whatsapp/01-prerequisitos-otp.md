@@ -1,5 +1,17 @@
 # 01 — Prerrequisitos: teléfono, OTP y opt-in (F0, bloqueante)
 
+> **Implementado 2026-09-13** (construido completo, se activa cuando haya línea):
+> hub `law-analytics-server` → `models/User.js` (`phone`, `phoneVerified`, `phoneVerifiedAt`,
+> `phoneVerification` con hash+TTL+intentos, `whatsappOptIn`, `channels.whatsapp`),
+> `controllers/phoneVerificationController.js`, `routes/phoneRoutes.js` (`GET /api/phone/status`,
+> `POST /api/phone/verify/start`, `POST /api/phone/verify/confirm`, `DELETE /api/phone`),
+> `services/whatsappOtpService.js` (M2M a la-notification con `NOTIFICATION_SERVICE_URL` +
+> Bearer `INTERNAL_SERVICE_TOKEN`), validación en `notificationPreferencesController`.
+> `la-notification` → `routes/whatsapp.js` (`/api/whatsapp/availability`, `/api/whatsapp/send-otp`)
+> + `services/channels/whatsapp/otp.js`. El OTP sale como **texto libre por Evolution API**
+> (no hace falta la plantilla HSM de más abajo). Sin línea conectada, `start` responde 503 con
+> motivo — el front decide qué mostrar con `availability` de `/status`.
+
 > **Esta fase bloquea todo lo demás.** Sin teléfono verificado y consentimiento explícito
 > no se puede enviar ningún WhatsApp (Meta lo exige y puede suspender el número si no se
 > respeta).

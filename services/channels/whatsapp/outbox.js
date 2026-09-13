@@ -154,19 +154,23 @@ async function markExpired(doc) {
   });
 }
 
-// Conteo de enviados hoy (ART) por instancia, calculado a lo sumo una vez
-// por tick, para respetar WhatsAppInstance.dailyLimit.
-async function sentTodayCounter() {
+// Enviados hoy (ART) por una instancia — incluye digests y OTPs (otp.js los
+// registra acá mismo ya como 'sent'), para respetar WhatsAppInstance.dailyLimit.
+async function countSentToday(instanceName) {
   const startOfDay = moment.tz(TIMEZONE).startOf('day').toDate();
+  return WhatsAppOutbox.countDocuments({
+    instanceName,
+    status: { $in: ['sent', 'delivered', 'read'] },
+    sentAt: { $gte: startOfDay },
+  });
+}
+
+// Memoizado por tick: una consulta por instancia por corrida.
+async function sentTodayCounter() {
   const counts = new Map();
   return async (instanceName) => {
     if (!counts.has(instanceName)) {
-      const n = await WhatsAppOutbox.countDocuments({
-        instanceName,
-        status: { $in: ['sent', 'delivered', 'read'] },
-        sentAt: { $gte: startOfDay },
-      });
-      counts.set(instanceName, n);
+      counts.set(instanceName, await countSentToday(instanceName));
     }
     return counts.get(instanceName);
   };
@@ -295,4 +299,4 @@ async function processPending(batchSize = 20) {
   }
 }
 
-module.exports = { enqueue, processPending };
+module.exports = { enqueue, processPending, countSentToday };
