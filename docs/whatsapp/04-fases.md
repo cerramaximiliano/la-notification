@@ -56,10 +56,19 @@
   dispatcher (F3) puede pasar el mismo `movementsByExpediente` a ambos canales.
 - Pendiente: prueba E2E real contra la instancia vinculada (depende de F1).
 
-### F3 — Integración en el dispatcher
-- Bloque `whatsapp` en las 5 funciones de `services/notifications.js`.
-- `NotificationLog.js`: enum `method` += `"whatsapp"`.
-- Respetar preferencias por tipo de evento existentes.
+### F3 — Integración en el dispatcher · **implementado 2026-09-13 (movimientos judiciales)**
+- Bloque `whatsapp` en `sendJudicialMovementNotifications` (`services/notifications.js`), justo
+  después del envío del email y antes de marcar `notificationStatus`: mismo lote que el email.
+  Elegibilidad estricta (`isWhatsappEligible`): `channels.whatsapp` + `phoneVerified` + opt-in
+  vigente. **Aditivo al email**: con el email apagado no sale nada por ningún canal.
+- Solo encola (`sendJudicialMovementDigest` → `WhatsAppOutbox`); el módulo descarta lo ya
+  intentado por WhatsApp y respeta el kill-switch. Independiente del resultado de SES.
+- `folderByCausa` ahora trae `folderName` → el WhatsApp lista el nombre de la carpeta del
+  usuario (fallback: `expedienteLabel`).
+- Rastros: `notifications[]` del `JudicialMovement` (`type:'whatsapp'`) y `NotificationLog`
+  por movimiento (`method:'whatsapp'`, `status:'created'` hasta que el outbox lo despacha).
+- Pendiente: cédulas (solo email por ahora) y los otros 4 tipos (tareas, calendario,
+  vencimientos, inactividad) — mismo patrón cuando se pidan.
 
 ### F4 — Webhook inbound · **implementado 2026-09-13**
 - `routes/whatsappWebhook.js` + `controllers/whatsappWebhookController.js`, montado en

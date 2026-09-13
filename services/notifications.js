@@ -5,7 +5,22 @@ const logger = require("../config/logger");
 const { sendEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder, PlanBannerSend } = require("../models");
 const policyService = require("./notificationPolicyService");
+const { sendJudicialMovementDigest } = require("./channels/whatsapp");
 const { addNotificationAtomic } = require("./notificationHelper");
+
+// Elegibilidad del canal WhatsApp (opt-in estricto): switch del canal +
+// teléfono verificado + consentimiento vigente. Los campos los escribe el hub
+// (phoneVerificationController); acá solo se leen. Es aditivo al email —
+// nunca reemplaza el email, ver docs/whatsapp/.
+function isWhatsappEligible(user) {
+    const channels = user?.preferences?.notifications?.channels || {};
+    const optIn = user?.whatsappOptIn || {};
+    return channels.whatsapp === true
+        && user?.phoneVerified === true
+        && !!user?.phone
+        && optIn.accepted === true
+        && !optIn.revokedAt;
+}
 const { getProcessedTemplate, processJudicialMovementsData, processJudicialCedulasData, sectionHeaderHtml } = require("./templateProcessor");
 
 /**
@@ -1301,7 +1316,7 @@ async function sendJudicialMovementNotifications({
             const causaIds = [...new Set(pendingMovements.map(m => m.expediente?.id).filter(Boolean))];
             for (const causaId of causaIds) {
                 try {
-                    const folder = await Folder.findOne({ causaId, userId }).select('_id archived').lean();
+                    const folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName').lean();
                     if (folder) folderByCausa[causaId] = folder;
                 } catch (folderErr) {
                     logger.warn(`No se pudo resolver folder para causa ${causaId}: ${folderErr.message}`);
@@ -1474,6 +1489,9 @@ async function sendJudicialMovementNotifications({
         // el mapa resuelto durante el enforcement central.
         const folderIdByExpediente = {};
         const folderInfoByExpediente = {};
+        // Nombre de la carpeta tal como la ve el usuario — es lo que lista el
+        // WhatsApp (services/channels/whatsapp/templates.js), no la carátula.
+        const folderNameByExpediente = {};
         for (const [key, data] of Object.entries(movementsByExpediente)) {
             const causaId = data.expediente?.id;
             if (!causaId) continue;
@@ -1481,6 +1499,7 @@ async function sendJudicialMovementNotifications({
             if (folder) {
                 folderIdByExpediente[key] = String(folder._id);
                 folderInfoByExpediente[key] = { archived: folder.archived === true };
+                if (folder.folderName) folderNameByExpediente[key] = folder.folderName;
             }
         }
         movementLinkOptions.folderIdByExpediente = folderIdByExpediente;
@@ -1591,6 +1610,33 @@ async function sendJudicialMovementNotifications({
             await banners.recordIfShown();
         }
 
+        // ---- Canal WhatsApp: aditivo al email, nunca en reemplazo ----
+        // Mismo lote de movimientos que el email y antes de que se marque
+        // notificationStatus (ambos canales ven exactamente lo mismo). El
+        // módulo descarta lo que ya se intentó por WhatsApp (ledger propio en
+        // NotificationLog), respeta el kill-switch y solo ENCOLA en
+        // WhatsAppOutbox — el cron de outbox.js lo despacha con espaciado.
+        // Independiente del resultado del email: si SES falló, el WhatsApp
+        // sale igual. Cédulas: por ahora solo van por email.
+        let whatsappResult = null;
+        if (hasMov && isWhatsappEligible(user)) {
+            try {
+                whatsappResult = await sendJudicialMovementDigest({
+                    userId: user._id,
+                    to: user.phone,
+                    movementsByExpediente,
+                    folderNameByExpediente
+                });
+                if (whatsappResult.skipped) {
+                    logger.info(`WhatsApp omitido para ${user.email}: ${whatsappResult.reason}`);
+                } else {
+                    logger.info(`WhatsApp encolado para ${user.email} (outbox ${whatsappResult.outboxId}${whatsappResult.created ? '' : ', ya existía'})`);
+                }
+            } catch (waError) {
+                logger.error(`Error encolando WhatsApp para ${user.email}: ${waError.message}`);
+            }
+        }
+
         // Actualizar estado de notificación
         const notificationDetails = {
             date: new Date(),
@@ -1642,6 +1688,14 @@ async function sendJudicialMovementNotifications({
                         
                         // Agregar la notificación
                         movement.notifications.push(notificationEntry);
+                        if (whatsappResult && !whatsappResult.skipped) {
+                            movement.notifications.push({
+                                date: new Date(),
+                                type: 'whatsapp',
+                                success: true,
+                                details: `Encolado por WhatsApp (outbox ${whatsappResult.outboxId})`
+                            });
+                        }
                         
                         // Guardar el documento
                         await movement.save();
