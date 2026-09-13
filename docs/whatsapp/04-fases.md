@@ -49,8 +49,11 @@
   fail-closed (sin `EVOLUTION_WEBHOOK_APIKEY` rechaza todo), filtro de grupos/broadcast y
   parseo de `connection.update`.
 - Kill-switch del canal: `status.whatsappEnabled` en `judicial-notification-configs` (default
-  false; `node scripts/whatsappInstances.js channel on|off`). Apagado: no se encola nada y lo
-  encolado espera. Falta declararlo en el modelo del hub para exponerlo en la admin UI.
+  false). Apagado: no se encola nada y lo encolado espera. Se prende desde la admin UI
+  (Notificaciones → Configuración → Estado → "Canal WhatsApp"; declarado en el modelo del
+  hub) — `node scripts/whatsappInstances.js channel on|off` queda de respaldo. La misma
+  pantalla lista las líneas (`whatsapp-instances`) con status/enabled editables y el outbox
+  de hoy (`admin-api /api/judicial-notification-config/whatsapp-instances`).
 - "Ya notificado" por WhatsApp = existe `NotificationLog` `method:'whatsapp'` para ese
   movimiento (cualquier status). `JudicialMovement.notificationStatus` queda del email. Así el
   dispatcher (F3) puede pasar el mismo `movementsByExpediente` a ambos canales.
@@ -91,10 +94,15 @@
   secret con el valor que Evolution manda en `apikey`. Verificar que el vhost NGINX de
   worker-003 proxyee ese path.
 
-### F5 — Frontend
-- `law-analytics-front` `TabSettings.tsx`: toggle de canal WhatsApp + UI de verificación de
-  número + texto de consentimiento (opt-in).
-- Interface `NotificationPreferences` del store → `channels.whatsapp`.
+### F5 — Frontend · **implementado 2026-09-13 (sin prueba en navegador todavía)**
+- `law-analytics-front`: `WhatsAppChannelPanel.tsx` (número → código por WhatsApp →
+  consentimiento obligatorio → verificado; reenvío con cooldown; reactivar tras baja; quitar
+  número) dentro del accordion de Canales de `TabSettings.tsx`, con el switch del canal que
+  solo se prende con número verificado + opt-in vigente. Sin línea conectada muestra
+  "todavía no disponible" (no oculta la opción).
+- `ApiService.ts`: `channels.whatsapp` + métodos `/api/phone/*`.
+- Hub: `POST /api/phone/opt-in` para volver a aceptar los avisos con un número ya verificado.
+- Pendiente: probar en navegador al deployar; toggle `status.whatsappEnabled` en la admin UI.
 
 ### F6 — Rollout gradual
 - Feature flag / beta con usuarios internos.
