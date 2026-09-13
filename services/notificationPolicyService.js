@@ -70,6 +70,16 @@ function isGloballyEnabled(config) {
 }
 
 /**
+ * Kill-switch del canal WhatsApp: requiere el switch global Y
+ * status.whatsappEnabled === true. A diferencia del email (legacy: sin config
+ * se asume habilitado), un canal nuevo y opt-in arranca apagado — sin config,
+ * o sin el campo, es false.
+ */
+function isWhatsappEnabled(config) {
+  return isGloballyEnabled(config) && config?.status?.whatsappEnabled === true;
+}
+
+/**
  * Merge sparse: solo los campos seteados en cada capa pisan la anterior.
  */
 function mergePolicy(base, layer) {
@@ -176,6 +186,7 @@ module.exports = {
   getConfigCached,
   invalidateCache,
   isGloballyEnabled,
+  isWhatsappEnabled,
   resolvePolicy,
   isActiveDay,
   passesContentFilters,

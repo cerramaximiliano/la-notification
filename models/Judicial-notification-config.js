@@ -270,6 +270,16 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
             type: String,
             default: 'El sistema de notificaciones está en mantenimiento'
         },
+        // Kill-switch del canal WhatsApp (services/channels/whatsapp). Default
+        // apagado: es opt-in y arranca sin línea vinculada; se prende a mano
+        // cuando la primera instancia esté conectada y calentada. Con false no
+        // se encola nada nuevo y lo ya encolado espera (no se pierde, salvo que
+        // venza por WHATSAPP_OUTBOX_MAX_AGE_HOURS). Toggle:
+        // `node scripts/whatsappInstances.js channel on|off`.
+        whatsappEnabled: {
+            type: Boolean,
+            default: false
+        },
         // Habilita el coordinador interno de movimientos PJN (safety-net que
         // escanea las colecciones de causas cada corrida del cron). Apagarlo
         // deja solo el webhook como vía de entrada de movimientos.

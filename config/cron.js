@@ -103,6 +103,29 @@ function setupCronJobs() {
     });
   }
 
+  // Drena el outbox de WhatsApp (services/channels/whatsapp/outbox.js): toma
+  // los `pending` con nextAttemptAt vencido y los manda vía Evolution API.
+  // Cron propio y separado del de movimientos judiciales a propósito — ese
+  // decide QUÉ notificar, este drena la cola con reintentos/backoff.
+  const whatsappOutboxCron = process.env.NOTIFICATION_WHATSAPP_OUTBOX_CRON || '*/2 * * * *';
+
+  if (!cron.validate(whatsappOutboxCron)) {
+    logger.error(`Expresión cron inválida para el outbox de WhatsApp: ${whatsappOutboxCron}`);
+  } else {
+    logger.info(`Configurando drenaje del outbox de WhatsApp: ${whatsappOutboxCron}`);
+    const { processPending } = require('../services/channels/whatsapp/outbox');
+    cron.schedule(whatsappOutboxCron, async () => {
+      try {
+        await processPending();
+      } catch (error) {
+        logger.error(`Error drenando el outbox de WhatsApp: ${error.message}`);
+      }
+    }, {
+      scheduled: true,
+      timezone: 'America/Argentina/Buenos_Aires'
+    });
+  }
+
   // Safe guard diario de notificaciones postales (8:00 ART): reintenta los
   // envíos fallidos del webhook y barre postal-trackings por eventos que
   // nunca se notificaron (worker caído, red, deploy).

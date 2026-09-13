@@ -42,7 +42,7 @@ const notificationLogSchema = new mongoose.Schema({
     // Método de envío
     method: {
       type: String,
-      enum: ["email", "browser", "webhook", "sms"],
+      enum: ["email", "browser", "webhook", "sms", "whatsapp"],
       required: true
     },
     
@@ -86,7 +86,21 @@ const notificationLogSchema = new mongoose.Schema({
       bouncePermanent: { type: Boolean },
       complaint: { type: Boolean },
       recipientEmail: String,
-      recipientPhone: String
+      recipientPhone: String,
+      // Canal WhatsApp: el doc de WhatsAppOutbox que va a mandar este aviso
+      // (el outbox actualiza status/failureReason por esta llave al procesar)
+      // y el id que devuelve Evolution API — equivalente al sesMessageId para
+      // correlacionar los eventos de entrega/lectura del webhook.
+      outboxId: {
+        type: mongoose.Schema.Types.ObjectId,
+        index: true,
+        sparse: true
+      },
+      providerMessageId: {
+        type: String,
+        index: true,
+        sparse: true
+      }
     },
 
     // Engagement reportado por SES (eventos Open/Click del Configuration Set).
