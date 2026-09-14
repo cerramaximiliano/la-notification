@@ -137,7 +137,7 @@
 
 ### F7 — Meta Cloud API como provider principal · **implementado 2026-09-14**
 - `config/meta.js` + `providers/metaCloud.provider.js`: `sendMessage` texto (ventana de 24 h
-  abierta) o plantilla `novedades_carpetas` (`templateParams` de una línea + botón URL);
+  abierta) o plantilla `movimientos_carpetas` (`templateParams` de una línea + botón URL);
   errores 4xx de Graph = permanentes (sin reintento). `providers/index.js` despacha por
   `WhatsAppInstance.provider` ('meta' | 'baileys').
 - `models/WhatsAppContact` (ventana de 24 h por teléfono) y `models/WhatsAppMessage` (todo
@@ -154,7 +154,7 @@
 - Registro de un número de Meta: admin → "Vincular línea nueva" → opción Meta (Phone number
   ID) o `scripts/whatsappInstances.js add-meta`; valida contra Graph y queda `connected`.
 - Pendiente del usuario: WABA en Meta Business Manager, verificación del negocio, línea (puede
-  ser fija), plantilla utility `novedades_carpetas` aprobada (body "Tenés novedades en {{1}}
+  ser fija), plantilla utility `movimientos_carpetas` aprobada (body "Tenés novedades en {{1}}
   carpeta(s): {{2}}" + botón URL dinámico), webhook suscripto al campo `messages`, tarjeta de
   pago cargada. Límite inicial 250 conversaciones iniciadas/día; sube con la verificación.
 - Para desarrollar/probar: número de prueba gratuito de la app de Meta (5 destinatarios).
@@ -189,6 +189,35 @@ inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan 
   resumen.
 - No se manda ningún mensaje al vencer la prueba (costaría una plantilla); el usuario lo ve en
   Configuración y, si escribe, en la respuesta.
+
+### F9 — Bot v1 + observabilidad · **implementado 2026-09-14**
+- `services/channels/whatsapp/bot.js`: para todo texto de un usuario verificado que no sea
+  baja ni verificación. Intents por palabra clave (`normalize` sin acentos): "novedades" /
+  "movimientos" / "1" → carpetas con movimientos detectados en las últimas 24 h
+  (`JudicialMovement.createdAt`, mismo `buildMovementDigestText` del aviso, nombre de carpeta
+  del usuario) o "No hay movimientos nuevos…"; "hola" / "ayuda" / "menu" y cualquier otra
+  cosa → menú corto (tope `FALLBACK_MAX_PER_DAY` = 3 por usuario y día; "novedades" no tiene
+  tope). Sin acceso (prueba vencida / sin plan) → `buildAccessExpiredText` una vez por día.
+  Todo responde por `reply()` (respeta el kill-switch) como texto dentro de la ventana de 24 h
+  que abre el propio mensaje: gratis en Meta. `whatsapp-messages.handledAs` guarda qué hizo
+  el bot (`bot_novedades`, `bot_menu`, `bot_fallback`, `bot_fallback_silenced`, `no_access`).
+- Dedupe de webhooks repetidos: `storeInbound` devuelve si el `providerMessageId` es nuevo;
+  un mensaje ya visto no vuelve a disparar el bot (Meta reintenta si no respondemos rápido).
+- Webhook Meta: `message_template_status_update` (aprobación/rechazo de plantillas → log,
+  warn si REJECTED/PAUSED) y `phone_number_quality_update` (→ log y
+  `WhatsAppInstance.lastConnectionReason = quality:<evento>`; no apaga la línea sola).
+- Admin → Notificaciones → Configuración → tarjeta **"Conversaciones de WhatsApp"**:
+  línea de tiempo de entrantes (`whatsapp-messages`) y salientes (outbox) con usuario,
+  tipo, estado y línea; filtros por teléfono/email (`GET admin-api
+  /api/judicial-notification-config/whatsapp-conversations`).
+- Plantilla: `novedades_carpetas` salió recategorizada como MARKETING (≈5× el costo) y se
+  reemplazó por **`movimientos_carpetas`** (UTILITY, `allow_category_change:false`, cuerpo
+  "Hay movimientos nuevos en {{1}} de tus carpetas en Law||Analytics: {{2}}. Podés ver el
+  detalle de cada movimiento desde el botón."). El nombre lo fija
+  `WHATSAPP_META_TEMPLATE_DIGEST` (default `movimientos_carpetas`). Meta no permite una
+  variable al final del cuerpo ni reutilizar un nombre mientras purga la plantilla borrada.
+- v2 (pendiente): Claude con tools de la-mcp-server (carpetas, movimientos, jurisprudencia,
+  documentos a carpetas por media).
 
 ## Dependencias entre fases
 

@@ -149,6 +149,30 @@ function parseWebhook(body = {}) {
   for (const entry of body.entry) {
     for (const change of entry.changes || []) {
       const value = change.value || {};
+
+      // Cambios de estado de plantillas (aprobación/rechazo/pausa) y de calidad
+      // del número: no son mensajes, se loguean y se reflejan en la instancia.
+      if (change.field === 'message_template_status_update') {
+        events.push({
+          type: 'template_status',
+          event: value.event || null, // APPROVED | REJECTED | PAUSED | PENDING_DELETION | …
+          templateId: value.message_template_id != null ? String(value.message_template_id) : null,
+          templateName: value.message_template_name || null,
+          language: value.message_template_language || null,
+          reason: value.reason || value.other_info?.description || null,
+        });
+        continue;
+      }
+      if (change.field === 'phone_number_quality_update') {
+        events.push({
+          type: 'quality',
+          event: value.event || null, // FLAGGED | UNFLAGGED | ONBOARDING | UPGRADE | DOWNGRADE …
+          displayPhoneNumber: value.display_phone_number || null,
+          currentLimit: value.current_limit || null,
+        });
+        continue;
+      }
+
       const phoneNumberId = value.metadata?.phone_number_id || null;
       const names = {};
       for (const c of value.contacts || []) if (c.wa_id) names[c.wa_id] = c.profile?.name || null;

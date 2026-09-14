@@ -47,7 +47,7 @@ function buildMovementDigestText(movementsByExpediente, options = {}) {
 }
 
 /**
- * Parámetros de la plantilla utility aprobada en Meta (`novedades_carpetas`):
+ * Parámetros de la plantilla utility de Meta (`movimientos_carpetas`, WHATSAPP_META_TEMPLATE_DIGEST):
  *   body: "Tenés novedades en {{1}} carpeta(s): {{2}}"  + botón URL con sufijo dinámico.
  * Meta no admite saltos de línea ni tabs en los parámetros: todo en una línea.
  *

@@ -12,7 +12,7 @@
 > `providers/evolutionApi.provider.js`, y el despachador `providers/index.js`
 > (`sendViaInstance(instance, to, text, { templateParams })`) que elige por
 > `WhatsAppInstance.provider`. Meta: dentro de la ventana de 24 h manda texto
-> libre; fuera, la plantilla utility `novedades_carpetas` con `templateParams`
+> libre; fuera, la plantilla utility `movimientos_carpetas` con `templateParams`
 > (una línea, sin saltos — `templates.buildMovementDigestTemplateParams`); sin
 > ventana ni plantilla → error permanente. La ventana se sigue por contacto en
 > `whatsapp-contacts.lastInboundAt`. Webhook de Meta: `routes/whatsappMetaWebhook.js`
@@ -115,7 +115,7 @@ WHATSAPP_META_ACCESS_TOKEN=...         # token de system user (permanente) o tem
 WHATSAPP_META_APP_SECRET=...           # firma X-Hub-Signature-256 del webhook (fail-closed)
 WHATSAPP_META_WEBHOOK_VERIFY_TOKEN=... # string propio para el GET de verificación
 WHATSAPP_META_GRAPH_VERSION=v22.0      # opcional
-WHATSAPP_META_TEMPLATE_DIGEST=novedades_carpetas   # plantilla utility aprobada
+WHATSAPP_META_TEMPLATE_DIGEST=movimientos_carpetas   # plantilla utility aprobada
 WHATSAPP_META_TEMPLATE_LANG=es_AR
 ```
 El `phoneNumberId` (y `wabaId`) NO es env: se registra por línea en `whatsapp-instances`

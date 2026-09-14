@@ -29,7 +29,7 @@ const client = axios.create({
 
 const isConfigured = () => Boolean(process.env.WHATSAPP_META_ACCESS_TOKEN);
 
-const templateDigest = () => process.env.WHATSAPP_META_TEMPLATE_DIGEST || 'novedades_carpetas';
+const templateDigest = () => process.env.WHATSAPP_META_TEMPLATE_DIGEST || 'movimientos_carpetas';
 const templateLang = () => process.env.WHATSAPP_META_TEMPLATE_LANG || 'es_AR';
 
 module.exports = { client, isConfigured, templateDigest, templateLang, GRAPH_VERSION };
