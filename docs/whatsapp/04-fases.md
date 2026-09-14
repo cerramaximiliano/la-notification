@@ -159,6 +159,37 @@
   pago cargada. Límite inicial 250 conversaciones iniciadas/día; sube con la verificación.
 - Para desarrollar/probar: número de prueba gratuito de la app de Meta (5 destinatarios).
 
+### F8 — Gating por plan con prueba para el plan gratuito · **implementado 2026-09-14**
+Una sola feature de plan pago, `whatsapp_channel`, cubre **avisos proactivos y bot** (el bot
+no se regala). Regla, en este orden: `featureGrants.whatsapp_channel` (bypass manual) →
+inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan pago vigente
+(`subscriptions` con `plan` standard/pro/premium, `status` active/trialing/past_due, sin
+`testMode` en prod) → prueba del plan gratuito (`User.whatsappTrial {startedAt, endsAt}`).
+- **Hub** (`services/whatsappAccessService.js`): `resolveWhatsappAccess(user)` →
+  `{allowed, reason: grant|plan|trial|trial_available|trial_expired|plan_required|closed, plan, trial, trialDays}`;
+  lo usan `GET /api/phone/status` (campo `enrollment`), `verify/start` y `opt-in` (403
+  `WHATSAPP_TRIAL_EXPIRED` / `WHATSAPP_PLAN_REQUIRED` / `WHATSAPP_NOT_ENROLLED`). La prueba
+  arranca en la **primera verificación** del número (`startTrialIfNeeded`, también para el
+  inbound) y **no se reinicia** al quitar y volver a cargar el número. Duración:
+  `status.whatsappTrialDays` del config (admin → Configuración; default 14; 0 = sin prueba,
+  solo planes pagos). Tests: `tests/phone/phoneRoutes.test.js` (32).
+- **la-notification** (`services/channels/whatsapp/access.js`): `resolveAccess(user)` con la
+  misma regla sin el paso de inscripción (quien ya está verificado sigue aunque se cierre el
+  piloto). `notifications.js` la consulta antes de `sendJudicialMovementDigest` — sin acceso no
+  encola (`skipped`, la preferencia `channels.whatsapp` queda: al pasar a un plan pago vuelve
+  solo). El webhook responde a un usuario sin acceso con `buildAccessExpiredText` (texto
+  dentro de la ventana de 24 h, gratis) en lugar de la auto-respuesta; el bot (F9) corta ahí.
+  `models/User.js` espeja `whatsappTrial` y `featureGrants`.
+- **la-subscriptions**: `FEATURE_REQUIREMENTS.whatsapp_channel` (standard/pro/premium, sin
+  addon) para `GET /api/internal/plan-allows-feature`; la prueba NO se evalúa ahí.
+- **Front**: `enrollment` con `reason/trial/trialDays`; el panel muestra "Incluido en los
+  planes… podés probarlo N días", chip "Prueba gratis hasta el …", y con acceso perdido el
+  aviso + botón "Ver planes" (`/apps/profiles/account/subscription`); la fila solo se oculta
+  en el piloto (`closed`). **Admin**: campo "Prueba de WhatsApp (plan gratuito)" y fila en el
+  resumen.
+- No se manda ningún mensaje al vencer la prueba (costaría una plantilla); el usuario lo ve en
+  Configuración y, si escribe, en la respuesta.
+
 ## Dependencias entre fases
 
 ```

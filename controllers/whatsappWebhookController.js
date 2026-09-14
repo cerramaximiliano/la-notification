@@ -5,9 +5,11 @@ const { User, WhatsAppOutbox, WhatsAppInstance, WhatsAppContact, WhatsAppMessage
 const policyService = require('../services/notificationPolicyService');
 const { sendViaInstance, evolution: evolutionProvider } = require('../services/channels/whatsapp/providers');
 const instances = require('../services/channels/whatsapp/instances');
+const { resolveAccess } = require('../services/channels/whatsapp/access');
 const {
   buildOptOutConfirmationText,
   buildAutoReplyText,
+  buildAccessExpiredText,
   buildVerifiedReplyText,
   buildVerificationFailedText,
   VERIFICATION_CODE_RE,
@@ -248,6 +250,8 @@ async function optOut(user, event, instance) {
   await reply({ phone: user.phone, userId: user._id, instance, text: buildOptOutConfirmationText(), kind: 'opt_out_reply' });
 }
 
+// Una respuesta por usuario cada 24 h. Si perdió el acceso (prueba vencida /
+// sin plan) se le dice eso — el bot (M9) también corta acá antes de responder.
 async function autoReply(user, event, instance) {
   const since = new Date(Date.now() - AUTO_REPLY_COOLDOWN_MS);
   const recent = await WhatsAppOutbox.exists({ userId: user._id, messageType: 'auto_reply', sentAt: { $gte: since } });
@@ -255,7 +259,10 @@ async function autoReply(user, event, instance) {
     logger.debug(`Auto-reply omitida para userId=${user._id}: ya se respondió en las últimas 24h`);
     return;
   }
-  await reply({ phone: user.phone, userId: user._id, instance, text: buildAutoReplyText(user.name?.split(' ')[0]), kind: 'auto_reply' });
+  const firstName = user.name?.split(' ')[0];
+  const access = await resolveAccess(user);
+  const text = access.allowed ? buildAutoReplyText(firstName) : buildAccessExpiredText(firstName, { reason: access.reason });
+  await reply({ phone: user.phone, userId: user._id, instance, text, kind: 'auto_reply' });
 }
 
 async function handleMessage(event) {
@@ -269,7 +276,7 @@ async function handleMessage(event) {
     return;
   }
 
-  const user = await User.findOne({ phone: event.fromPhone }).select('_id name phone whatsappOptIn preferences.notifications.channels').lean();
+  const user = await User.findOne({ phone: event.fromPhone }).select('_id name phone whatsappOptIn whatsappTrial featureGrants preferences.notifications.channels').lean();
   await touchContact(event, user?._id || null);
 
   if (!user) {

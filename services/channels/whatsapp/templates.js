@@ -111,6 +111,23 @@ function buildOptOutConfirmationText() {
  * Respuesta automática a cualquier otro mensaje de un usuario conocido: este
  * número no atiende consultas (todavía). Como mucho una vez por día por usuario.
  */
+// Usuario verificado que perdió el acceso (prueba del plan gratuito vencida o
+// sin plan pago). Se responde dentro de la ventana de 24 h (gratis en Meta).
+function buildAccessExpiredText(name, { reason } = {}) {
+  const saludo = name ? `Hola ${name}.` : 'Hola.';
+  const motivo = reason === 'trial_expired'
+    ? 'Tu período de prueba de WhatsApp en Law||Analytics terminó.'
+    : 'Los avisos por WhatsApp de Law||Analytics están incluidos en los planes pagos.';
+  return [
+    `${saludo} ${motivo}`,
+    '',
+    'Para seguir recibiendo por acá las novedades de tus causas, pasá a un plan Estándar o superior:',
+    `${DEFAULT_FRONT_BASE_URL}/apps/profiles/account/subscription?source=whatsapp_trial`,
+    '',
+    'Los avisos por email siguen llegando como siempre.',
+  ].join('\n');
+}
+
 function buildAutoReplyText(name) {
   const saludo = name ? `Hola ${name}.` : 'Hola.';
   return [
@@ -130,5 +147,6 @@ module.exports = {
   buildVerificationFailedText,
   buildOptOutConfirmationText,
   buildAutoReplyText,
+  buildAccessExpiredText,
   VERIFICATION_CODE_RE,
 };

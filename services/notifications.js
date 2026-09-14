@@ -12,6 +12,7 @@ const { addNotificationAtomic } = require("./notificationHelper");
 // teléfono verificado + consentimiento vigente. Los campos los escribe el hub
 // (phoneVerificationController); acá solo se leen. Es aditivo al email —
 // nunca reemplaza el email, ver docs/whatsapp/.
+const { resolveAccess: resolveWhatsappAccess } = require("./channels/whatsapp/access");
 function isWhatsappEligible(user) {
     const channels = user?.preferences?.notifications?.channels || {};
     const optIn = user?.whatsappOptIn || {};
@@ -1621,12 +1622,18 @@ async function sendJudicialMovementNotifications({
         let whatsappResult = null;
         if (hasMov && isWhatsappEligible(user)) {
             try {
-                whatsappResult = await sendJudicialMovementDigest({
-                    userId: user._id,
-                    to: user.phone,
-                    movementsByExpediente,
-                    folderNameByExpediente
-                });
+                // Gating por plan: grant, plan pago o prueba vigente. Sin acceso
+                // no se encola (la preferencia queda; al pasar a un plan pago
+                // vuelve a salir solo).
+                const access = await resolveWhatsappAccess(user);
+                whatsappResult = access.allowed
+                    ? await sendJudicialMovementDigest({
+                        userId: user._id,
+                        to: user.phone,
+                        movementsByExpediente,
+                        folderNameByExpediente
+                    })
+                    : { skipped: true, reason: `sin acceso (${access.reason})` };
                 if (whatsappResult.skipped) {
                     logger.info(`WhatsApp omitido para ${user.email}: ${whatsappResult.reason}`);
                 } else {

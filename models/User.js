@@ -231,6 +231,19 @@ const UserSchema = new Schema(
       source: { type: String, default: null },
       revokedAt: { type: Date, default: null }
     },
+    // Prueba del canal WhatsApp para el plan gratuito (la arranca el hub al
+    // verificar el número). services/channels/whatsapp/access.js la evalúa
+    // junto con featureGrants.whatsapp_channel y el plan (subscriptions).
+    whatsappTrial: {
+      startedAt: { type: Date, default: null },
+      endsAt: { type: Date, default: null }
+    },
+    // Bypasses manuales por feature (admin → Feature grants). Mixed como en el
+    // hub: { whatsapp_channel: true } o { whatsapp_channel: { granted, revokedAt, ... } }.
+    featureGrants: {
+      type: mongoose.Schema.Types.Mixed,
+      default: undefined
+    },
   },
   {
     timestamps: true
