@@ -37,7 +37,22 @@ function requireConfigured(instance) {
   }
 }
 
-async function post(instance, payload) {
+// Código de Graph "Recipient phone number not in allowed list": solo lo devuelve
+// el NÚMERO DE PRUEBA de Meta (lista de hasta 5 destinatarios). Esa lista guarda
+// los celulares argentinos en la forma vieja `54 <área> 15 <número>` y rechaza
+// el `549…` canónico (verificado 2026-09-14). Con un número real no ocurre.
+const NOT_IN_ALLOWED_LIST = 131030;
+
+// Variantes `54<área>15<número>` de un `549<área><número>` (área de 2, 3 o 4
+// dígitos: no se puede saber cuál sin tabla, así que se prueban las tres).
+function argentinaLegacyVariants(waId) {
+  const m = /^549(\d{10})$/.exec(waId);
+  if (!m) return [];
+  const rest = m[1];
+  return [2, 3, 4].map((len) => `54${rest.slice(0, len)}15${rest.slice(len)}`);
+}
+
+async function postOnce(instance, payload) {
   try {
     const res = await client.post(`/${instance.phoneNumberId}/messages`, { messaging_product: 'whatsapp', ...payload });
     return res.data?.messages?.[0]?.id || null;
@@ -51,6 +66,27 @@ async function post(instance, payload) {
       `Meta rechazó el envío${status ? ` (${status})` : ''}: ${details?.message || error.message}`,
       { permanent, status, details }
     );
+  }
+}
+
+async function post(instance, payload) {
+  try {
+    return await postOnce(instance, payload);
+  } catch (error) {
+    if (error.details?.code !== NOT_IN_ALLOWED_LIST) throw error;
+    const variants = argentinaLegacyVariants(payload.to);
+    if (variants.length === 0) throw error;
+    logger.warn(`Meta (número de prueba) no admite ${payload.to}; se prueba la forma 54…15… de la lista de destinatarios`);
+    let lastError = error;
+    for (const to of variants) {
+      try {
+        return await postOnce(instance, { ...payload, to });
+      } catch (retryError) {
+        lastError = retryError;
+        if (retryError.details?.code !== NOT_IN_ALLOWED_LIST) throw retryError;
+      }
+    }
+    throw lastError;
   }
 }
 
