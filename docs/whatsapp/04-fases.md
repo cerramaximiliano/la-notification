@@ -117,7 +117,14 @@
 - Hub: `POST /api/phone/opt-in` para volver a aceptar los avisos con un número ya verificado.
 - Pendiente: probar en navegador al deployar; toggle `status.whatsappEnabled` en la admin UI.
 
-### F6 — Rollout gradual
+### F6 — Rollout gradual · **piloto por grants (2026-09-14)**
+- `status.whatsappOpenEnrollment` (default false) en `judicial-notification-configs`: mientras
+  esté apagado, solo los usuarios con `featureGrants.whatsapp_channel` (admin → Usuarios →
+  Feature grants) ven la opción en Configuración y pueden verificar su número
+  (`GET /api/phone/status` devuelve `enrollment.allowed` + `availability.reason:'not_enrolled'`;
+  `POST /verify/start` responde 403 `WHATSAPP_NOT_ENROLLED`). Los ya verificados siguen
+  operando aunque se cierre la inscripción. Switch "Inscripción a WhatsApp abierta a todos" en
+  la misma pantalla que el kill-switch. Piloto = grants a los voluntarios + `channel on`.
 - Feature flag / beta con usuarios internos.
 - Monitorear entregas y fallos vía `NotificationLog` (`method:"whatsapp"`) y el outbox.
 - Ajustar agrupación/rate-limit según costo real.
