@@ -29,13 +29,17 @@
 - Warm-up de 1–2 semanas por línea antes del primer envío automático.
 - Cargar `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/`EVOLUTION_WEBHOOK_APIKEY` (deployment, una
   sola vez) en el secret compartido `env-8tdon8` de AWS Secrets Manager.
-- Alta de cada línea con `node scripts/whatsappInstances.js link <name> "<label>" +549…`
-  (desde la laptop por Tailscale o desde worker-003): registra en Mongo, crea la instancia
-  en Evolution con el webhook configurado (header `apikey` = `EVOLUTION_WEBHOOK_APIKEY`),
-  guarda el QR como PNG en el directorio actual e imprime el *pairing code* (con el número),
-  espera a que la conexión quede `open` y marca la línea `connected`. `qr <name>` genera
-  otro QR si venció. Alternativa sin script: el Manager de Evolution (`/manager`) por Tailscale.
-  **No** hay que leer el QR de los logs del contenedor.
+- Alta de cada línea **desde la admin UI**: Notificaciones → Configuración → tarjeta "Líneas
+  de WhatsApp" → "Vincular línea nueva" (nombre, etiqueta, número opcional) → muestra el QR
+  y el *pairing code* en pantalla, renueva el QR cada 40 s y avisa cuando la conexión queda
+  abierta (la línea pasa a `connected` sola). Por detrás: admin-api → la-notification
+  (`POST /api/whatsapp/instances`, `GET …/:name/qr`, `GET …/:name/state`, M2M) →
+  `services/channels/whatsapp/linking.js` → Evolution (`/instance/create` con webhook y header
+  `apikey` = `EVOLUTION_WEBHOOK_APIKEY`, `/instance/connect`, `/instance/connectionState`).
+  Las credenciales de Evolution no salen de la-notification.
+- Respaldo por consola con la misma lógica: `node scripts/whatsappInstances.js link <name>
+  "<label>" +549…` (guarda el QR como PNG e imprime el pairing code) y `qr <name>`. También
+  el Manager de Evolution (`/manager`) por Tailscale. **No** hay que leer el QR de los logs.
 - Si Evolution devuelve `{count:0}` sin QR o la sesión se cae al vincular (errores 515/408),
   es el meta-issue #2437 del repo: en el `.env` del contenedor `CACHE_REDIS_ENABLED=false`,
   `CACHE_LOCAL_ENABLED=true`, `DATABASE_SAVE_DATA_{CHATS,CONTACTS,HISTORIC,LABELS}=false` y

@@ -39,32 +39,17 @@ const path = require('path');
 const mongoose = require('mongoose');
 
 const INSTANCE_STATUSES = ['pending_link', 'connected', 'disconnected', 'banned', 'disabled'];
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'];
-const WEBHOOK_URL = process.env.WHATSAPP_WEBHOOK_PUBLIC_URL || 'https://notifications.lawanalytics.app/api/whatsapp/webhook';
 const CONNECT_TIMEOUT_MS = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function evolutionClient() {
+function requireEvolutionEnv() {
   if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) {
     console.log('Faltan EVOLUTION_API_URL y/o EVOLUTION_API_KEY en el entorno (apikey global de Evolution API).');
     process.exit(1);
   }
-  const axios = require('axios');
-  return axios.create({
-    baseURL: process.env.EVOLUTION_API_URL.replace(/\/$/, ''),
-    headers: { apikey: process.env.EVOLUTION_API_KEY },
-    timeout: 20000,
-    validateStatus: () => true,
-  });
-}
-
-function webhookConfig() {
-  const config = { enabled: true, url: WEBHOOK_URL, events: WEBHOOK_EVENTS, base64: false };
-  if (process.env.EVOLUTION_WEBHOOK_APIKEY) {
-    config.headers = { apikey: process.env.EVOLUTION_WEBHOOK_APIKEY };
-  }
-  return config;
+  // Misma lógica que usan los endpoints internos para la admin UI.
+  return require('../services/channels/whatsapp/linking');
 }
 
 function saveQr(name, base64) {
@@ -73,27 +58,6 @@ function saveQr(name, base64) {
   const file = path.resolve(process.cwd(), `whatsapp-qr-${name}.png`);
   fs.writeFileSync(file, Buffer.from(data, 'base64'));
   return file;
-}
-
-function toEvolutionNumber(phone) {
-  return phone ? String(phone).replace(/^\+/, '') : undefined;
-}
-
-async function fetchQr(api, name, phone) {
-  // Evolution puede devolver {count:0} sin QR durante unos segundos (o si la
-  // instancia está en un estado raro — ver meta-issue #2437 del repo).
-  for (let attempt = 1; attempt <= 8; attempt++) {
-    const params = phone ? { number: toEvolutionNumber(phone) } : {};
-    const res = await api.get(`/instance/connect/${encodeURIComponent(name)}`, { params });
-    if (res.status === 200 && (res.data?.base64 || res.data?.pairingCode || res.data?.code)) {
-      return res.data;
-    }
-    if (res.status === 200 && res.data?.instance?.state === 'open') {
-      return { alreadyOpen: true };
-    }
-    if (attempt < 8) await sleep(3000);
-  }
-  return null;
 }
 
 function printQr(name, qr) {
@@ -111,12 +75,11 @@ function printQr(name, qr) {
   console.log('El QR vence en ~1 minuto: si expira, `node scripts/whatsappInstances.js qr ' + name + '` genera otro.');
 }
 
-async function waitForOpen(api, name) {
+async function waitForOpen(linking, name) {
   const started = Date.now();
   process.stdout.write('Esperando que la línea se conecte (Ctrl+C para salir; se puede marcar `connected` después desde la admin)');
   while (Date.now() - started < CONNECT_TIMEOUT_MS) {
-    const res = await api.get(`/instance/connectionState/${encodeURIComponent(name)}`);
-    const state = res.data?.instance?.state;
+    const { state } = await linking.getState(name); // open → deja la línea connected en Mongo
     if (state === 'open') {
       console.log('\nConectada.');
       return true;
@@ -126,14 +89,6 @@ async function waitForOpen(api, name) {
   }
   console.log('\nNo se conectó en 5 minutos. Cuando escanees, marcá la línea como Conectada desde la admin (o `status <name> connected`).');
   return false;
-}
-
-async function ensureRegistered(WhatsAppInstance, name, label, phoneNumber) {
-  const existing = await WhatsAppInstance.findOne({ name });
-  if (existing) return existing;
-  const doc = await WhatsAppInstance.create({ name, label, phoneNumber });
-  console.log(`Instancia '${name}' registrada en Mongo (pending_link).`);
-  return doc;
 }
 
 async function main() {
@@ -190,34 +145,23 @@ async function main() {
           console.log('Uso: node scripts/whatsappInstances.js link <name> [label] [+549...]');
           process.exit(1);
         }
-        const api = evolutionClient();
-        await ensureRegistered(WhatsAppInstance, name, label || name, phoneNumber);
-
-        const createBody = { instanceName: name, integration: 'WHATSAPP-BAILEYS', qrcode: true, webhook: webhookConfig() };
-        if (phoneNumber) createBody.number = toEvolutionNumber(phoneNumber);
-        const created = await api.post('/instance/create', createBody);
-
-        let qr = null;
-        if (created.status === 201 || created.status === 200) {
-          console.log(`Instancia '${name}' creada en Evolution (${created.data?.instance?.status || 'connecting'}).`);
-          qr = created.data?.qrcode && (created.data.qrcode.base64 || created.data.qrcode.pairingCode) ? created.data.qrcode : null;
-        } else {
-          const msg = JSON.stringify(created.data?.error || created.data?.response || created.data || {});
-          if (/already|exist|in use|duplicad/i.test(msg) || created.status === 403 || created.status === 409) {
-            console.log(`La instancia '${name}' ya existía en Evolution — se re-aplica el webhook.`);
-            const wh = await api.post(`/webhook/set/${encodeURIComponent(name)}`, webhookConfig());
-            if (wh.status >= 300) console.log(`No se pudo configurar el webhook (${wh.status}): ${JSON.stringify(wh.data)}`);
-          } else {
-            console.log(`Error creando la instancia (${created.status}): ${msg}`);
-            process.exit(1);
-          }
+        const linking = requireEvolutionEnv();
+        let result;
+        try {
+          result = await linking.createInstance({ name, label, phoneNumber });
+        } catch (error) {
+          console.log(`Error creando la instancia: ${error.message}${error.details ? ` — ${error.details}` : ''}`);
+          process.exit(1);
         }
+        if (result.alreadyExisted) console.log(`La instancia '${name}' ya existía en Evolution — se re-aplicó el webhook.`);
+        else console.log(`Instancia '${name}' creada en Evolution (${result.evolutionStatus}).`);
 
-        if (!qr) qr = await fetchQr(api, name, phoneNumber);
+        let qr = result.qr;
+        if (!qr) qr = await linking.fetchQr(name, phoneNumber, { attempts: 6 });
         printQr(name, qr);
 
         if (qr && !qr.alreadyOpen) {
-          const ok = await waitForOpen(api, name);
+          const ok = await waitForOpen(linking, name);
           if (!ok) break;
         }
         await WhatsAppInstance.updateOne({ name }, { status: 'connected' });
@@ -231,8 +175,13 @@ async function main() {
           console.log('Uso: node scripts/whatsappInstances.js qr <name> [+549...]');
           process.exit(1);
         }
-        const api = evolutionClient();
-        printQr(name, await fetchQr(api, name, phoneNumber));
+        const linking = requireEvolutionEnv();
+        try {
+          printQr(name, await linking.fetchQr(name, phoneNumber, { attempts: 6 }));
+        } catch (error) {
+          console.log(`Error: ${error.message}`);
+          process.exit(1);
+        }
         break;
       }
 
