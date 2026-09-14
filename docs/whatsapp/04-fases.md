@@ -28,9 +28,18 @@
   Evolution API self-hosted (Docker + Postgres + Redis, ver el informe de factibilidad publicado).
 - Warm-up de 1–2 semanas por línea antes del primer envío automático.
 - Cargar `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/`EVOLUTION_WEBHOOK_APIKEY` (deployment, una
-  sola vez) en el secret compartido `env-8tdon8` de AWS Secrets Manager, y cada línea con
-  `node scripts/whatsappInstances.js add <name> <label> [phoneNumber]` → pasar a `connected`
-  cuando esté probada.
+  sola vez) en el secret compartido `env-8tdon8` de AWS Secrets Manager.
+- Alta de cada línea con `node scripts/whatsappInstances.js link <name> "<label>" +549…`
+  (desde la laptop por Tailscale o desde worker-003): registra en Mongo, crea la instancia
+  en Evolution con el webhook configurado (header `apikey` = `EVOLUTION_WEBHOOK_APIKEY`),
+  guarda el QR como PNG en el directorio actual e imprime el *pairing code* (con el número),
+  espera a que la conexión quede `open` y marca la línea `connected`. `qr <name>` genera
+  otro QR si venció. Alternativa sin script: el Manager de Evolution (`/manager`) por Tailscale.
+  **No** hay que leer el QR de los logs del contenedor.
+- Si Evolution devuelve `{count:0}` sin QR o la sesión se cae al vincular (errores 515/408),
+  es el meta-issue #2437 del repo: en el `.env` del contenedor `CACHE_REDIS_ENABLED=false`,
+  `CACHE_LOCAL_ENABLED=true`, `DATABASE_SAVE_DATA_{CHATS,CONTACTS,HISTORIC,LABELS}=false` y
+  reiniciar. Guardar chats/contactos/histórico no aporta nada a este uso.
 - Sin latencia de aprobación externa (a diferencia del WABA de Meta) — el camino crítico acá
   es el warm-up de la cuenta, no un proceso de terceros.
 - **Ya no bloquea F2**: sin ninguna instancia cargada, el módulo del canal funciona igual — los
