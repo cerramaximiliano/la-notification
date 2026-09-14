@@ -18,6 +18,8 @@ const PlanBannerSend = require('./PlanBannerSend');
 const PostalNotification = require('./PostalNotification');
 const WhatsAppOutbox = require('./WhatsAppOutbox');
 const WhatsAppInstance = require('./WhatsAppInstance');
+const WhatsAppContact = require('./WhatsAppContact');
+const WhatsAppMessage = require('./WhatsAppMessage');
 
 // Exportar todos los modelos
 module.exports = {
@@ -34,5 +36,7 @@ module.exports = {
   PlanBannerSend,
   PostalNotification,
   WhatsAppOutbox,
-  WhatsAppInstance
+  WhatsAppInstance,
+  WhatsAppContact,
+  WhatsAppMessage
 };

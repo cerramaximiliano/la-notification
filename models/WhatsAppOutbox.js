@@ -5,10 +5,12 @@ const mongoose = require('mongoose');
 // sendWhatsAppNotification() nunca llama al provider directamente: encola acá,
 // y el cron de config/cron.js drena los `pending` con reintentos/backoff.
 const whatsAppOutboxSchema = new mongoose.Schema({
+  // Null en respuestas a números que (todavía) no son usuarios — ej. el aviso
+  // de "código inválido" durante la verificación entrante.
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
+    default: null,
     index: true,
   },
 
@@ -47,6 +49,20 @@ const whatsAppOutboxSchema = new mongoose.Schema({
   messageType: {
     type: String,
     default: 'judicial_movement_digest',
+  },
+
+  // Provider por el que salió (se fija junto con instanceName al procesar).
+  provider: {
+    type: String,
+    enum: ['baileys', 'meta'],
+  },
+
+  // Versión "plantilla" del mismo mensaje, para Meta fuera de la ventana de
+  // 24 h: parámetros de la plantilla utility aprobada (sin saltos de línea).
+  // Si falta y la ventana está cerrada, el envío por Meta falla sin reintento.
+  templateParams: {
+    type: mongoose.Schema.Types.Mixed,
+    default: undefined,
   },
 
   entityType: {

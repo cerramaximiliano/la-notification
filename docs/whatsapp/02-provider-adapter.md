@@ -1,20 +1,25 @@
-# 02 — Provider adapter: Evolution API (decidido) vs Meta Cloud API vs Twilio
+# 02 — Provider adapter: Meta Cloud API (principal) + Evolution API (respaldo)
 
-> **Actualizado 2026-09-13**: se decidió arrancar con **Evolution API en modo
-> Baileys**, con una línea propia (chip prepago) — no Meta Cloud API ni
-> Twilio. Ver el informe de factibilidad publicado (Camino A vs Camino B) y
-> `docs/whatsapp/04-fases.md` para el detalle. Esta página se mantiene
-> vigente para el día que el volumen justifique migrar a Meta Cloud API
-> (Camino B) — el adapter está pensado justo para que ese cambio sea
-> configuración, no reescritura.
+> **Actualizado 2026-09-14**: **Meta Cloud API pasa a ser el provider principal**
+> (el 13 se había arrancado por Evolution/Baileys). Motivos: el costo por aviso
+> (~US$0,012 utility en AR) es asumible, las conversaciones iniciadas por el
+> usuario son gratis (ventana de 24 h, texto libre) y habilitan el bot
+> conversacional que se quiere a futuro, y un bot automatizado sobre Baileys es
+> motivo de baneo. Evolution queda como respaldo/dev (sigue corriendo en
+> worker-cloud-02).
 >
-> Implementación real: `la-notification/services/channels/whatsapp/providers/evolutionApi.provider.js`.
-> El contrato cambió respecto al borrador original: **`sendMessage(to, text)`
-> en vez de `sendTemplate(to, templateName, variables)`** — Baileys no pasa
-> por la Cloud API oficial de Meta, así que no exige plantillas HSM
-> pre-aprobadas (ver `03-plantillas-hsm.md`, que queda en pausa mientras se
-> use este provider). El texto final se arma en `templates.js` antes de
-> encolar.
+> Implementación: `providers/metaCloud.provider.js` (Graph API directa),
+> `providers/evolutionApi.provider.js`, y el despachador `providers/index.js`
+> (`sendViaInstance(instance, to, text, { templateParams })`) que elige por
+> `WhatsAppInstance.provider`. Meta: dentro de la ventana de 24 h manda texto
+> libre; fuera, la plantilla utility `novedades_carpetas` con `templateParams`
+> (una línea, sin saltos — `templates.buildMovementDigestTemplateParams`); sin
+> ventana ni plantilla → error permanente. La ventana se sigue por contacto en
+> `whatsapp-contacts.lastInboundAt`. Webhook de Meta: `routes/whatsappMetaWebhook.js`
+> (`GET` challenge + `POST` firmado con `X-Hub-Signature-256`; `app.js` guarda
+> `req.rawBody`). Verificación del número por **mensaje entrante** (link `wa.me`
+> con `VERIFICAR-<código>` → el hub lo confirma vía `POST /api/internal/phone/confirm-inbound`).
+> Mensajes entrantes guardados en `whatsapp-messages`.
 
 ## Objetivo
 
@@ -104,15 +109,19 @@ selección de línea por usuario es determinística (`services/channels/whatsapp
 hash de `userId` sobre las instancias activas) y queda fija en el `WhatsAppOutbox` del primer
 envío exitoso, para que los reintentos salgan siempre por el mismo número.
 
-### Meta Cloud API
+### Meta Cloud API (principal — `config/meta.js`)
 ```
-WHATSAPP_PROVIDER=meta
-WHATSAPP_META_PHONE_NUMBER_ID=...      # ID del número emisor
-WHATSAPP_META_BUSINESS_ACCOUNT_ID=...  # WABA id
-WHATSAPP_META_ACCESS_TOKEN=...         # token de larga duración / system user
-WHATSAPP_META_WEBHOOK_VERIFY_TOKEN=... # para el GET challenge del webhook
-WHATSAPP_META_APP_SECRET=...           # para validar firma de payloads
+WHATSAPP_META_ACCESS_TOKEN=...         # token de system user (permanente) o temporal del panel
+WHATSAPP_META_APP_SECRET=...           # firma X-Hub-Signature-256 del webhook (fail-closed)
+WHATSAPP_META_WEBHOOK_VERIFY_TOKEN=... # string propio para el GET de verificación
+WHATSAPP_META_GRAPH_VERSION=v22.0      # opcional
+WHATSAPP_META_TEMPLATE_DIGEST=novedades_carpetas   # plantilla utility aprobada
+WHATSAPP_META_TEMPLATE_LANG=es_AR
 ```
+El `phoneNumberId` (y `wabaId`) NO es env: se registra por línea en `whatsapp-instances`
+(`provider:'meta'`) desde la admin ("Vincular línea nueva" → Meta) o con
+`node scripts/whatsappInstances.js add-meta <name> <phoneNumberId> [label] [+número]`, que
+valida el número contra Graph y lo deja `connected`.
 
 ### Twilio
 ```

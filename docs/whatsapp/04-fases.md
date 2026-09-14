@@ -1,5 +1,11 @@
 # 04 — Fases de implementación, riesgos y costos
 
+> **Actualizado 2026-09-14 — Meta Cloud API es el provider principal** (ver `02-provider-adapter.md`).
+> F7 (abajo) implementado: provider Meta, webhook firmado, verificación por mensaje entrante,
+> digest en plantilla, mensajes entrantes guardados, registro de números de Meta desde la
+> admin. Lo que sigue de este encabezado describe la primera implementación (Baileys), que
+> queda como respaldo.
+>
 > **Actualizado 2026-09-13**: provider decidido = Evolution API (Baileys), ver
 > `02-provider-adapter.md`. F1 cambia de "alta WABA + aprobación de plantillas HSM" a
 > "conseguir la línea + vincular la instancia Evolution API" — sin latencia de aprobación
@@ -128,6 +134,30 @@
 - Feature flag / beta con usuarios internos.
 - Monitorear entregas y fallos vía `NotificationLog` (`method:"whatsapp"`) y el outbox.
 - Ajustar agrupación/rate-limit según costo real.
+
+### F7 — Meta Cloud API como provider principal · **implementado 2026-09-14**
+- `config/meta.js` + `providers/metaCloud.provider.js`: `sendMessage` texto (ventana de 24 h
+  abierta) o plantilla `novedades_carpetas` (`templateParams` de una línea + botón URL);
+  errores 4xx de Graph = permanentes (sin reintento). `providers/index.js` despacha por
+  `WhatsAppInstance.provider` ('meta' | 'baileys').
+- `models/WhatsAppContact` (ventana de 24 h por teléfono) y `models/WhatsAppMessage` (todo
+  mensaje entrante, con `handledAs`; Meta no guarda historial).
+- `routes/whatsappMetaWebhook.js` (`/api/whatsapp/meta-webhook`): GET challenge
+  (`WHATSAPP_META_WEBHOOK_VERIFY_TOKEN`), POST firmado (`WHATSAPP_META_APP_SECRET` sobre
+  `req.rawBody`), responde 200 y procesa después. Mismo controller que Baileys.
+- **Verificación por mensaje entrante** (default para todos los providers): el hub
+  (`POST /api/phone/verify/start`) devuelve un link `wa.me/<línea>?text=…VERIFICAR-<código>`;
+  el usuario lo envía; el webhook llama `POST /api/internal/phone/confirm-inbound` del hub
+  (Bearer `INTERNAL_SERVICE_TOKEN`), que verifica + registra opt-in (`source:'whatsapp_inbound'`)
+  y prende el canal; se le responde por texto (ventana recién abierta). Front: botón "Abrir
+  WhatsApp" + polling del estado. El OTP saliente queda solo con `WHATSAPP_VERIFY_MODE=outbound` (Baileys).
+- Registro de un número de Meta: admin → "Vincular línea nueva" → opción Meta (Phone number
+  ID) o `scripts/whatsappInstances.js add-meta`; valida contra Graph y queda `connected`.
+- Pendiente del usuario: WABA en Meta Business Manager, verificación del negocio, línea (puede
+  ser fija), plantilla utility `novedades_carpetas` aprobada (body "Tenés novedades en {{1}}
+  carpeta(s): {{2}}" + botón URL dinámico), webhook suscripto al campo `messages`, tarjeta de
+  pago cargada. Límite inicial 250 conversaciones iniciadas/día; sube con la verificación.
+- Para desarrollar/probar: número de prueba gratuito de la app de Meta (5 destinatarios).
 
 ## Dependencias entre fases
 

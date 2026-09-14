@@ -169,6 +169,24 @@ async function main() {
         break;
       }
 
+      case 'add-meta': {
+        // node scripts/whatsappInstances.js add-meta <name> <phoneNumberId> [label] [+549...]
+        const [name, phoneNumberId, label, phoneNumber] = args;
+        if (!name || !phoneNumberId) {
+          console.log('Uso: node scripts/whatsappInstances.js add-meta <name> <phoneNumberId> [label] [+549...]');
+          process.exit(1);
+        }
+        const linking = require('../services/channels/whatsapp/linking');
+        try {
+          const r = await linking.createInstance({ name, provider: 'meta', phoneNumberId, label, phoneNumber });
+          console.log(`Instancia Meta '${name}' ${r.alreadyExisted ? 'actualizada' : 'registrada'} y connected:`, r.meta);
+        } catch (error) {
+          console.log(`Error: ${error.message}${error.details ? ` — ${JSON.stringify(error.details)}` : ''}`);
+          process.exit(1);
+        }
+        break;
+      }
+
       case 'qr': {
         const [name, phoneNumber] = args;
         if (!name) {

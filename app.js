@@ -38,7 +38,9 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json());
+// `verify` guarda el body crudo: el webhook de Meta (routes/whatsappMetaWebhook.js)
+// valida la firma X-Hub-Signature-256 sobre los bytes exactos que llegaron.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -95,6 +97,11 @@ const initializeApp = async () => {
         // antes del router interno para que el path no lo capture aquel.
         const whatsappWebhookRoutes = require('./routes/whatsappWebhook');
         app.use('/api/whatsapp/webhook', whatsappWebhookRoutes);
+
+        // Canal WhatsApp — webhook de WhatsApp Cloud API (Meta): GET de
+        // verificación + POST firmado. Provider principal desde 2026-09-14.
+        const whatsappMetaWebhookRoutes = require('./routes/whatsappMetaWebhook');
+        app.use('/api/whatsapp/meta-webhook', whatsappMetaWebhookRoutes);
 
         // Canal WhatsApp — endpoints internos para el hub (envío síncrono del
         // OTP de verificación de teléfono, disponibilidad del canal).

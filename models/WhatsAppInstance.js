@@ -17,6 +17,18 @@ const whatsAppInstanceSchema = new mongoose.Schema({
     unique: true,
     trim: true,
   },
+  // 'meta' = WhatsApp Cloud API oficial (provider principal desde 2026-09-14):
+  // sin QR ni warm-up, plantillas para avisos proactivos, texto libre dentro de
+  // la ventana de 24 h. 'baileys' = Evolution API (respaldo/dev).
+  provider: {
+    type: String,
+    enum: ['baileys', 'meta'],
+    default: 'baileys',
+  },
+  // Solo provider 'meta': id del número en la WABA (es lo que va en la URL de
+  // /{phoneNumberId}/messages) y id de la cuenta de negocio.
+  phoneNumberId: String,
+  wabaId: String,
   label: {
     type: String, // ej "Línea 1 - Buenos Aires"
   },

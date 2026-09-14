@@ -2,14 +2,12 @@ const logger = require('../../../config/logger');
 const { NotificationLog } = require('../../../models');
 const { expedienteLabel } = require('../../templateProcessor');
 const policyService = require('../../notificationPolicyService');
-const { buildMovementDigestText } = require('./templates');
+const { buildMovementDigestText, buildMovementDigestTemplateParams } = require('./templates');
 const outbox = require('./outbox');
 
-// Movimientos por los que YA se intentó un WhatsApp (cualquier estado: si
-// salió no se repite; si venció, la novedad ya es vieja; si falló por
-// número inválido, reintentar no ayuda). Es el criterio propio del canal
-// para "ya lo notifiqué" — independiente de JudicialMovement.notificationStatus,
-// que lo marca el email y no se toca.
+// Movimientos por los que YA se intentó un WhatsApp (cualquier estado). Es el
+// criterio propio del canal para "ya lo notifiqué" — independiente de
+// JudicialMovement.notificationStatus, que lo marca el email y no se toca.
 async function findAlreadyAttemptedIds(userId, movementIds) {
   if (movementIds.length === 0) return new Set();
   const logs = await NotificationLog.find({
@@ -22,29 +20,11 @@ async function findAlreadyAttemptedIds(userId, movementIds) {
 }
 
 /**
- * Punto de entrada único del canal WhatsApp. Por ahora solo soporta el
- * digest de movimientos judiciales (lo que se pidió primero); otros tipos de
- * notificación (tareas, calendario, inactividad) se agregan acá mismo el día
- * que se necesiten, siguiendo el mismo patrón.
+ * Punto de entrada único del canal WhatsApp para el digest de movimientos.
+ * NO envía nada directamente: arma el texto (y su versión plantilla para
+ * Meta), lo encola en WhatsAppOutbox y deja un NotificationLog por movimiento.
+ * Se autoprotege: kill-switch + descarta lo ya intentado por este canal.
  *
- * NO envía nada directamente: arma el texto, lo encola en WhatsAppOutbox (lo
- * despacha el cron de config/cron.js) y deja un NotificationLog por
- * movimiento — igual que el email — con status:'created' y
- * delivery.outboxId; el outbox los pasa a sent/failed cuando procesa.
- *
- * Se autoprotege: respeta el kill-switch del canal y descarta los
- * movimientos que ya tuvieron un intento por WhatsApp, así que el caller
- * puede pasarle el mismo `movementsByExpediente` que usa el email sin
- * preocuparse por re-notificar.
- *
- * Todavía no está enganchado a services/notifications.js (eso es el
- * milestone siguiente) — este módulo se puede probar de forma aislada.
- *
- * @param {Object} params
- * @param {string} params.userId
- * @param {string} params.to               Teléfono E.164 verificado del usuario
- * @param {Object} params.movementsByExpediente Misma forma que arma services/notifications.js
- * @param {Object.<string,string>} [params.folderNameByExpediente]
  * @returns {Promise<{ skipped: boolean, reason?: string, created?: boolean, outboxId?: string }>}
  */
 async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, folderNameByExpediente }) {
@@ -52,7 +32,6 @@ async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, f
     return { skipped: true, reason: 'channel_disabled' };
   }
 
-  // Aplanar y descartar lo ya intentado por este canal.
   const all = Object.entries(movementsByExpediente || {})
     .flatMap(([key, data]) => (data?.movements || [])
       .filter(m => m && m._id)
@@ -74,21 +53,20 @@ async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, f
   if (!text) {
     return { skipped: true, reason: 'no_movements' };
   }
+  const templateParams = buildMovementDigestTemplateParams(filteredByExpediente, { folderNameByExpediente });
 
-  // Los ids del lote determinan la idempotencia (mismo lote = mismo mensaje,
-  // no se duplica; un lote distinto SÍ genera un envío nuevo).
   const entityIds = fresh.map(({ movement }) => movement._id);
 
   const { doc: outboxDoc, created } = await outbox.enqueue({
     userId,
     to,
     text,
+    templateParams,
     entityType: 'judicial_movement',
     entityIds,
     messageType: 'judicial_movement_digest',
   });
 
-  // Solo la primera vez: si enqueue deduplicó, la auditoría ya existe.
   if (created) {
     for (const { expediente, movement } of fresh) {
       try {
