@@ -142,7 +142,7 @@ async function semana(userId) {
     .sort((a, b) => new Date(b.last.movimiento?.fecha) - new Date(a.last.movimiento?.fecha));
   const lines = [`Últimos ${WEEK_DAYS} días: ${plural(movements.length, 'movimiento', 'movimientos')} en ${plural(entries.length, 'carpeta', 'carpetas')}.`, ''];
   for (const e of entries.slice(0, MAX_ITEMS)) {
-    lines.push(`• ${labelFor(grouped, e.key, folderNames)} — ${e.count} (último ${fmtDate(e.last.movimiento?.fecha)}: ${truncate(e.last.movimiento?.tipo, 40)})`);
+    lines.push(`• ${truncate(labelFor(grouped, e.key, folderNames), 70)} — ${e.count} (último ${fmtDate(e.last.movimiento?.fecha)}: ${truncate(e.last.movimiento?.tipo, 40)})`);
   }
   if (entries.length > MAX_ITEMS) lines.push(`…y ${plural(entries.length - MAX_ITEMS, 'carpeta más', 'carpetas más')}`);
   lines.push('', `Ver el detalle: ${link('apps/folders/list', 'whatsapp_bot')}`);
@@ -200,11 +200,20 @@ async function cedulas(userId) {
   const items = await JudicialCedula.find({ userId, 'cedula.fecha': { $gte: since }, notificationStatus: { $ne: 'skipped' } })
     .select('expediente cedula').sort({ 'cedula.fecha': -1 }).limit(MAX_ITEMS + 1).lean();
   if (items.length === 0) return `Sin cédulas ni notificaciones electrónicas en los últimos ${WEEK_DAYS} días.`;
-  const lines = [`Cédulas de los últimos ${WEEK_DAYS} días:`, ''];
-  for (const c of items.slice(0, MAX_ITEMS)) {
-    lines.push(`• ${fmtDate(c.cedula?.fecha)} — ${truncate(c.expediente?.caratula, 50)}${c.cedula?.tipo && c.cedula.tipo !== 'Cédula' ? ` (${truncate(c.cedula.tipo, 30)})` : ''}`);
+  // Varias cédulas del mismo día y carátula se ven iguales: se agrupan con el conteo.
+  const groups = [];
+  for (const c of items) {
+    const key = `${fmtDate(c.cedula?.fecha)}|${c.expediente?.id || c.expediente?.caratula}`;
+    const g = groups.find(x => x.key === key);
+    if (g) g.count += 1;
+    else groups.push({ key, fecha: c.cedula?.fecha, caratula: c.expediente?.caratula, tipo: c.cedula?.tipo, count: 1 });
   }
-  if (items.length > MAX_ITEMS) lines.push('…y más');
+  const lines = [`Cédulas de los últimos ${WEEK_DAYS} días:`, ''];
+  for (const g of groups.slice(0, MAX_ITEMS)) {
+    const tipo = g.tipo && g.tipo !== 'Cédula' ? ` (${truncate(g.tipo, 30)})` : '';
+    lines.push(`• ${fmtDate(g.fecha)} — ${truncate(g.caratula, 60)}${tipo}${g.count > 1 ? ` — ${g.count} cédulas` : ''}`);
+  }
+  if (groups.length > MAX_ITEMS) lines.push('…y más');
   lines.push('', `Ver el detalle: ${link('apps/folders/list', 'whatsapp_bot')}`);
   return lines.join('\n');
 }
@@ -237,14 +246,24 @@ async function agenda(userId) {
   const now = new Date();
   const until = new Date(now.getTime() + WEEK_DAYS * DAY_MS);
   const events = await Event.find({ userId, start: { $gte: new Date(now.getTime() - 60 * 60 * 1000), $lte: until } })
-    .select('title start end allDay type folderId').sort({ start: 1 }).limit(MAX_ITEMS + 1).lean();
-  if (events.length === 0) return `No tenés eventos en la agenda para los próximos ${WEEK_DAYS} días.`;
-  const lines = [`Agenda de los próximos ${WEEK_DAYS} días:`, ''];
-  for (const e of events.slice(0, MAX_ITEMS)) {
-    const when = e.allDay ? fmtDate(e.start) : fmtDateTime(e.start);
-    lines.push(`• ${when}: ${truncate(e.title, 60)}${e.type ? ` (${truncate(e.type, 20)})` : ''}`);
+    .select('title start end allDay type folderId').sort({ start: 1 }).limit(MAX_ITEMS * 6).lean();
+  // Importaciones viejas de Google dejaron el mismo evento repetido: se muestra una vez.
+  const unique = [];
+  const seen = new Set();
+  for (const e of events) {
+    const key = `${clean(e.title).toLowerCase()}|${new Date(e.start).getTime()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(e);
   }
-  if (events.length > MAX_ITEMS) lines.push('…y más');
+  if (unique.length === 0) return `No tenés eventos en la agenda para los próximos ${WEEK_DAYS} días.`;
+  const lines = [`Agenda de los próximos ${WEEK_DAYS} días:`, ''];
+  for (const e of unique.slice(0, MAX_ITEMS)) {
+    const when = e.allDay ? fmtDate(e.start) : fmtDateTime(e.start);
+    const tipo = e.type && !['google', 'manual'].includes(String(e.type).toLowerCase()) ? ` (${truncate(e.type, 20)})` : '';
+    lines.push(`• ${when}: ${truncate(e.title, 60)}${tipo}`);
+  }
+  if (unique.length > MAX_ITEMS) lines.push('…y más');
   lines.push('', `Ver calendario: ${link('apps/calendar', 'whatsapp_bot')}`);
   return lines.join('\n');
 }
