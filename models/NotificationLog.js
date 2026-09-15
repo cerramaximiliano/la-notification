@@ -12,7 +12,7 @@ const notificationLogSchema = new mongoose.Schema({
   // Tipo de entidad que generó la notificación
   entityType: {
     type: String,
-    enum: ["event", "task", "movement", "alert", "custom", "judicial_movement", "postal"],
+    enum: ["event", "task", "movement", "alert", "custom", "judicial_movement", "judicial_cedula", "postal"],
     required: true,
     index: true
   },

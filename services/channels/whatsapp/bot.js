@@ -118,14 +118,22 @@ function labelFor(grouped, key, folderNames) {
 // ---------- consultas ----------
 async function novedades(userId) {
   const since = new Date(Date.now() - NOVEDADES_WINDOW_HOURS * 60 * 60 * 1000);
-  const movements = await JudicialMovement.find({ userId, createdAt: { $gte: since }, notificationStatus: { $ne: 'skipped' } })
-    .select('expediente movimiento').lean();
-  if (movements.length === 0) {
-    return [`No hay movimientos nuevos en tus carpetas en las últimas ${NOVEDADES_WINDOW_HOURS} horas.`, `Ver tus carpetas: ${link('apps/folders/list', 'whatsapp_bot')}`].join('\n');
+  const [movements, cedulas] = await Promise.all([
+    JudicialMovement.find({ userId, createdAt: { $gte: since }, notificationStatus: { $ne: 'skipped' } }).select('expediente movimiento').lean(),
+    JudicialCedula.find({ userId, createdAt: { $gte: since }, notificationStatus: { $ne: 'skipped' } }).select('expediente cedula').lean(),
+  ]);
+  if (movements.length === 0 && cedulas.length === 0) {
+    return [`No hay movimientos ni cédulas nuevas en tus carpetas en las últimas ${NOVEDADES_WINDOW_HOURS} horas.`, `Ver tus carpetas: ${link('apps/folders/list', 'whatsapp_bot')}`].join('\n');
   }
   const grouped = groupByExpediente(movements);
-  const folderNameByExpediente = await folderNamesFor(userId, Object.keys(grouped));
-  return buildMovementDigestText(grouped, { folderNameByExpediente });
+  const cedulasByExpediente = {};
+  for (const c of cedulas) {
+    const key = expedienteKey(c);
+    if (!cedulasByExpediente[key]) cedulasByExpediente[key] = { expediente: c.expediente, cedulas: [] };
+    cedulasByExpediente[key].cedulas.push(c);
+  }
+  const folderNameByExpediente = await folderNamesFor(userId, [...new Set([...Object.keys(grouped), ...Object.keys(cedulasByExpediente)])]);
+  return buildMovementDigestText(grouped, { folderNameByExpediente, cedulasByExpediente });
 }
 
 async function semana(userId) {

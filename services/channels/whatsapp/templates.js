@@ -10,13 +10,31 @@ function cleanName(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
-function digestEntries(movementsByExpediente, folderNameByExpediente = {}) {
-  return Object.entries(movementsByExpediente || {})
-    .filter(([, data]) => (data?.movements?.length || 0) > 0)
-    .map(([key, data]) => ({
-      nombre: cleanName(folderNameByExpediente[key]) || cleanName(expedienteLabel(data.expediente)),
-      cantidad: data.movements.length,
-    }));
+// Una entrada por carpeta con la cantidad de movimientos y de cédulas
+// (notificaciones electrónicas). Las cédulas se dicen explícitamente como
+// "cédula" para que el usuario sepa que no es un movimiento del expediente.
+function digestEntries(movementsByExpediente, folderNameByExpediente = {}, cedulasByExpediente = {}) {
+  const byKey = {};
+  const nameFor = (key, expediente) => cleanName(folderNameByExpediente[key]) || cleanName(expediente?.caratula) || cleanName(expedienteLabel(expediente));
+  for (const [key, data] of Object.entries(movementsByExpediente || {})) {
+    const n = data?.movements?.length || 0;
+    if (n === 0) continue;
+    byKey[key] = { nombre: nameFor(key, data.expediente), cantidad: n, cedulas: 0 };
+  }
+  for (const [key, data] of Object.entries(cedulasByExpediente || {})) {
+    const n = data?.cedulas?.length || 0;
+    if (n === 0) continue;
+    if (!byKey[key]) byKey[key] = { nombre: nameFor(key, data.expediente), cantidad: 0, cedulas: 0 };
+    byKey[key].cedulas += n;
+  }
+  return Object.values(byKey);
+}
+
+function describeCounts({ cantidad, cedulas }, { short = false } = {}) {
+  const parts = [];
+  if (cantidad > 0) parts.push(short ? `${cantidad}` : `${cantidad} ${cantidad === 1 ? 'novedad' : 'novedades'}`);
+  if (cedulas > 0) parts.push(`${cedulas} ${cedulas === 1 ? 'cédula' : 'cédulas'}`);
+  return parts.join(short ? ', ' : ' y ');
 }
 
 /**
@@ -29,14 +47,14 @@ function digestEntries(movementsByExpediente, folderNameByExpediente = {}) {
  * @returns {string|null} null si no hay nada que avisar
  */
 function buildMovementDigestText(movementsByExpediente, options = {}) {
-  const { folderNameByExpediente = {}, frontBaseUrl = DEFAULT_FRONT_BASE_URL } = options;
-  const entries = digestEntries(movementsByExpediente, folderNameByExpediente);
+  const { folderNameByExpediente = {}, cedulasByExpediente = {}, frontBaseUrl = DEFAULT_FRONT_BASE_URL } = options;
+  const entries = digestEntries(movementsByExpediente, folderNameByExpediente, cedulasByExpediente);
   const total = entries.length;
   if (total === 0) return null;
 
   const lines = [`Tenés novedades en ${total} ${total === 1 ? 'carpeta' : 'carpetas'}:`, ''];
-  for (const { nombre, cantidad } of entries.slice(0, MAX_LISTED)) {
-    lines.push(`• ${nombre} — ${cantidad} ${cantidad === 1 ? 'novedad' : 'novedades'}`);
+  for (const entry of entries.slice(0, MAX_LISTED)) {
+    lines.push(`• ${entry.nombre} — ${describeCounts(entry)}`);
   }
   if (total > MAX_LISTED) {
     const resto = total - MAX_LISTED;
@@ -54,12 +72,12 @@ function buildMovementDigestText(movementsByExpediente, options = {}) {
  * @returns {{ count: string, folders: string, ctaSuffix: string } | null}
  */
 function buildMovementDigestTemplateParams(movementsByExpediente, options = {}) {
-  const { folderNameByExpediente = {} } = options;
-  const entries = digestEntries(movementsByExpediente, folderNameByExpediente);
+  const { folderNameByExpediente = {}, cedulasByExpediente = {} } = options;
+  const entries = digestEntries(movementsByExpediente, folderNameByExpediente, cedulasByExpediente);
   const total = entries.length;
   if (total === 0) return null;
 
-  const items = entries.slice(0, MAX_LISTED).map(({ nombre, cantidad }) => `${nombre} (${cantidad})`);
+  const items = entries.slice(0, MAX_LISTED).map((entry) => `${entry.nombre} (${describeCounts(entry, { short: true })})`);
   if (total > MAX_LISTED) items.push(`y ${total - MAX_LISTED} más`);
   return {
     count: String(total),

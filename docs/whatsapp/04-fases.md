@@ -189,6 +189,10 @@ inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan 
   resumen.
 - No se manda ningún mensaje al vencer la prueba (costaría una plantilla); el usuario lo ve en
   Configuración y, si escribe, en la respuesta.
+- **Cédulas en el aviso (2026-09-15)**: el digest de WhatsApp incluye las cédulas del mismo
+  lote del email, dichas explícitamente ("• Carpeta — 2 novedades y 1 cédula"); ledger propio
+  por cédula (`NotificationLog` `entityType:'judicial_cedula'`, `method:'whatsapp'`). El bot
+  "novedades" también las muestra. Nombre de carpeta → carátula → número/año como fallback.
 
 ### F9 — Bot v1 + observabilidad · **implementado 2026-09-14**
 - `services/channels/whatsapp/bot.js` (**v1.5**): para todo texto de un usuario verificado

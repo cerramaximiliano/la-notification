@@ -8,15 +8,32 @@ const outbox = require('./outbox');
 // Movimientos por los que YA se intentó un WhatsApp (cualquier estado). Es el
 // criterio propio del canal para "ya lo notifiqué" — independiente de
 // JudicialMovement.notificationStatus, que lo marca el email y no se toca.
-async function findAlreadyAttemptedIds(userId, movementIds) {
-  if (movementIds.length === 0) return new Set();
+async function findAlreadyAttemptedIds(userId, ids, entityType = 'judicial_movement') {
+  if (ids.length === 0) return new Set();
   const logs = await NotificationLog.find({
     userId,
-    entityType: 'judicial_movement',
+    entityType,
     'notification.method': 'whatsapp',
-    entityId: { $in: movementIds },
+    entityId: { $in: ids },
   }).select('entityId').lean();
   return new Set(logs.map(l => String(l.entityId)));
+}
+
+// Aplana { key: { expediente, <field>: [...] } } a [{ key, expediente, item }].
+function flatten(byExpediente, field) {
+  return Object.entries(byExpediente || {})
+    .flatMap(([key, data]) => (data?.[field] || [])
+      .filter(item => item && item._id)
+      .map(item => ({ key, expediente: data.expediente, item })));
+}
+
+function regroup(list, field) {
+  const out = {};
+  for (const { key, expediente, item } of list) {
+    if (!out[key]) out[key] = { expediente, [field]: [] };
+    out[key][field].push(item);
+  }
+  return out;
 }
 
 /**
@@ -27,35 +44,35 @@ async function findAlreadyAttemptedIds(userId, movementIds) {
  *
  * @returns {Promise<{ skipped: boolean, reason?: string, created?: boolean, outboxId?: string }>}
  */
-async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, folderNameByExpediente }) {
+async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, cedulasByExpediente = {}, folderNameByExpediente }) {
   if (!policyService.isWhatsappEnabled(await policyService.getConfigCached())) {
     return { skipped: true, reason: 'channel_disabled' };
   }
 
-  const all = Object.entries(movementsByExpediente || {})
-    .flatMap(([key, data]) => (data?.movements || [])
-      .filter(m => m && m._id)
-      .map(m => ({ key, expediente: data.expediente, movement: m })));
-  const attempted = await findAlreadyAttemptedIds(userId, all.map(x => x.movement._id));
-  const fresh = all.filter(x => !attempted.has(String(x.movement._id)));
+  // Movimientos y cédulas del lote, menos lo que este canal ya intentó.
+  const allMovements = flatten(movementsByExpediente, 'movements');
+  const allCedulas = flatten(cedulasByExpediente, 'cedulas');
+  const [attemptedMov, attemptedCed] = await Promise.all([
+    findAlreadyAttemptedIds(userId, allMovements.map(x => x.item._id), 'judicial_movement'),
+    findAlreadyAttemptedIds(userId, allCedulas.map(x => x.item._id), 'judicial_cedula'),
+  ]);
+  const freshMovements = allMovements.filter(x => !attemptedMov.has(String(x.item._id)));
+  const freshCedulas = allCedulas.filter(x => !attemptedCed.has(String(x.item._id)));
 
-  if (fresh.length === 0) {
-    return { skipped: true, reason: all.length === 0 ? 'no_movements' : 'already_attempted' };
+  if (freshMovements.length === 0 && freshCedulas.length === 0) {
+    return { skipped: true, reason: allMovements.length + allCedulas.length === 0 ? 'no_movements' : 'already_attempted' };
   }
 
-  const filteredByExpediente = {};
-  for (const { key, expediente, movement } of fresh) {
-    if (!filteredByExpediente[key]) filteredByExpediente[key] = { expediente, movements: [] };
-    filteredByExpediente[key].movements.push(movement);
-  }
+  const filteredByExpediente = regroup(freshMovements, 'movements');
+  const filteredCedulas = regroup(freshCedulas, 'cedulas');
 
-  const text = buildMovementDigestText(filteredByExpediente, { folderNameByExpediente });
+  const text = buildMovementDigestText(filteredByExpediente, { folderNameByExpediente, cedulasByExpediente: filteredCedulas });
   if (!text) {
     return { skipped: true, reason: 'no_movements' };
   }
-  const templateParams = buildMovementDigestTemplateParams(filteredByExpediente, { folderNameByExpediente });
+  const templateParams = buildMovementDigestTemplateParams(filteredByExpediente, { folderNameByExpediente, cedulasByExpediente: filteredCedulas });
 
-  const entityIds = fresh.map(({ movement }) => movement._id);
+  const entityIds = [...freshMovements, ...freshCedulas].map(({ item }) => item._id);
 
   const { doc: outboxDoc, created } = await outbox.enqueue({
     userId,
@@ -68,9 +85,13 @@ async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, f
   });
 
   if (created) {
-    for (const { expediente, movement } of fresh) {
+    const toLog = [
+      ...freshMovements.map(x => ({ ...x, entityType: 'judicial_movement' })),
+      ...freshCedulas.map(x => ({ ...x, entityType: 'judicial_cedula' })),
+    ];
+    for (const { expediente, item, entityType } of toLog) {
       try {
-        await NotificationLog.createFromEntity('judicial_movement', movement, {
+        await NotificationLog.createFromEntity(entityType, item, {
           method: 'whatsapp',
           status: 'created',
           content: {
@@ -84,11 +105,11 @@ async function sendJudicialMovementDigest({ userId, to, movementsByExpediente, f
           },
           metadata: {
             source: 'cron',
-            expediente: expedienteLabel(movement.expediente || expediente),
+            expediente: expedienteLabel(item.expediente || expediente),
           },
         }, userId);
       } catch (logError) {
-        logger.error(`Error creando NotificationLog de WhatsApp para movimiento ${movement._id}: ${logError.message}`);
+        logger.error(`Error creando NotificationLog de WhatsApp para ${entityType} ${item._id}: ${logError.message}`);
       }
     }
   }

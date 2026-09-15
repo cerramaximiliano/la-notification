@@ -1503,6 +1503,17 @@ async function sendJudicialMovementNotifications({
                 if (folder.folderName) folderNameByExpediente[key] = folder.folderName;
             }
         }
+        // Cédulas: nombre de carpeta para el WhatsApp (el email usa la carátula).
+        for (const [key, data] of Object.entries(cedulasByExpediente)) {
+            const causaId = data.expediente?.id;
+            if (!causaId || folderNameByExpediente[key]) continue;
+            try {
+                const folder = folderByCausa[causaId] || await Folder.findOne({ causaId, userId }).select('folderName').lean();
+                if (folder?.folderName) folderNameByExpediente[key] = folder.folderName;
+            } catch (folderErr) {
+                logger.warn(`No se pudo resolver folder para la cédula de ${causaId}: ${folderErr.message}`);
+            }
+        }
         movementLinkOptions.folderIdByExpediente = folderIdByExpediente;
         movementLinkOptions.folderInfoByExpediente = folderInfoByExpediente;
         // Título de la banda de sección (contenedor v3): "Movimientos" cuando el
@@ -1618,9 +1629,9 @@ async function sendJudicialMovementNotifications({
         // NotificationLog), respeta el kill-switch y solo ENCOLA en
         // WhatsAppOutbox — el cron de outbox.js lo despacha con espaciado.
         // Independiente del resultado del email: si SES falló, el WhatsApp
-        // sale igual. Cédulas: por ahora solo van por email.
+        // sale igual. Incluye las cédulas del mismo lote (se dicen "cédula").
         let whatsappResult = null;
-        if (hasMov && isWhatsappEligible(user)) {
+        if ((hasMov || hasCed) && isWhatsappEligible(user)) {
             try {
                 // Gating por plan: grant, plan pago o prueba vigente. Sin acceso
                 // no se encola (la preferencia queda; al pasar a un plan pago
@@ -1631,6 +1642,7 @@ async function sendJudicialMovementNotifications({
                         userId: user._id,
                         to: user.phone,
                         movementsByExpediente,
+                        cedulasByExpediente,
                         folderNameByExpediente
                     })
                     : { skipped: true, reason: `sin acceso (${access.reason})` };
