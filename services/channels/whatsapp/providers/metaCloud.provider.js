@@ -95,14 +95,26 @@ async function post(instance, payload) {
  * cerrada, la plantilla del digest con `templateParams` ({ count, folders,
  * ctaSuffix }); sin plantilla posible → error permanente.
  */
-async function sendMessage(instance, to, text, { templateParams = null, forceTemplate = false } = {}) {
+async function sendMessage(instance, to, text, { templateParams = null, forceTemplate = false, interactive = null } = {}) {
   requireConfigured(instance);
   const contact = await WhatsAppContact.findOne({ phone: to }).lean();
   const windowOpen = WhatsAppContact.isServiceWindowOpen(contact);
 
   let providerMessageId;
   let kind;
-  if (windowOpen && !forceTemplate) {
+  if (windowOpen && !forceTemplate && interactive) {
+    // Mensaje interactivo (lista/botones) — solo dentro de la ventana, gratis.
+    // Si Meta lo rechaza (formato), cae al texto plano equivalente.
+    try {
+      providerMessageId = await post(instance, { to: toWaId(to), type: 'interactive', interactive });
+      kind = 'interactive';
+    } catch (error) {
+      if (!error.permanent) throw error;
+      logger.warn(`Meta rechazó el mensaje interactivo para ${to} (${error.message}); se manda como texto`);
+      providerMessageId = await post(instance, { to: toWaId(to), type: 'text', text: { body: text, preview_url: false } });
+      kind = 'text';
+    }
+  } else if (windowOpen && !forceTemplate) {
     providerMessageId = await post(instance, { to: toWaId(to), type: 'text', text: { body: text, preview_url: false } });
     kind = 'text';
   } else if (templateParams) {
@@ -195,6 +207,8 @@ function parseWebhook(body = {}) {
           phoneNumberId,
           instance: null,
           text: text ?? null,
+          // id de la opción elegida en una lista/botón interactivo (bot).
+          replyId: m.interactive?.list_reply?.id || m.interactive?.button_reply?.id || m.button?.payload || null,
           media,
           timestamp: m.timestamp ? new Date(Number(m.timestamp) * 1000) : new Date(),
         });

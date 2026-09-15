@@ -191,13 +191,20 @@ inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan 
   Configuración y, si escribe, en la respuesta.
 
 ### F9 — Bot v1 + observabilidad · **implementado 2026-09-14**
-- `services/channels/whatsapp/bot.js`: para todo texto de un usuario verificado que no sea
-  baja ni verificación. Intents por palabra clave (`normalize` sin acentos): "novedades" /
-  "movimientos" / "1" → carpetas con movimientos detectados en las últimas 24 h
-  (`JudicialMovement.createdAt`, mismo `buildMovementDigestText` del aviso, nombre de carpeta
-  del usuario) o "No hay movimientos nuevos…"; "hola" / "ayuda" / "menu" y cualquier otra
-  cosa → menú corto (tope `FALLBACK_MAX_PER_DAY` = 3 por usuario y día; "novedades" no tiene
+- `services/channels/whatsapp/bot.js` (**v1.5**): para todo texto de un usuario verificado
+  que no sea baja ni verificación. Menú de 8 opciones como **lista interactiva** de Meta
+  (`interactive.type:'list'`, el usuario toca; en Baileys o si Meta la rechaza, texto
+  numerado) y se elige también por número o palabra: 1 Novedades (movimientos de las
+  últimas 24 h, mismo `buildMovementDigestText` del aviso), 2 Esta semana (7 días, por
+  carpeta con último movimiento), 3 Buscar carpeta (por nombre/número de expediente/carátula;
+  pide el texto en un segundo paso — estado en `WhatsAppContact.bot.pendingIntent`, vence a
+  los 10 min; también `carpeta <texto>` directo; 1 match → últimos 3 movimientos, varios →
+  lista para refinar), 4 Cédulas (7 días), 5 Vencimientos (tareas de los próximos 7 días,
+  con carpeta y ‼️ si prioridad alta), 6 Agenda (eventos de los próximos 7 días), 7 Mi cuenta
+  (número, avisos, acceso: grant/plan/prueba hasta X), 8 Ayuda. Cualquier otra cosa → menú
+  (tope `FALLBACK_MAX_PER_DAY` = 3 por usuario y día; las consultas con contenido no tienen
   tope). Sin acceso (prueba vencida / sin plan) → `buildAccessExpiredText` una vez por día.
+  El id de la fila tocada llega como `replyId` en el evento (`interactive.list_reply.id`).
   Todo responde por `reply()` (respeta el kill-switch) como texto dentro de la ventana de 24 h
   que abre el propio mensaje: gratis en Meta. `whatsapp-messages.handledAs` guarda qué hizo
   el bot (`bot_novedades`, `bot_menu`, `bot_fallback`, `bot_fallback_silenced`, `no_access`).

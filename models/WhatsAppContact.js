@@ -22,6 +22,12 @@ const whatsAppContactSchema = new mongoose.Schema({
   lastOutboundAt: Date,
   // Por qué línea/instancia habló la última vez (para responder por la misma).
   lastInstanceName: String,
+  // Estado conversacional del bot: intent que espera un dato más (ej. "buscar
+  // carpeta" espera el texto a buscar). Vence solo (BOT_STATE_TTL_MS en bot.js).
+  bot: {
+    pendingIntent: { type: String, default: null },
+    pendingSince: { type: Date, default: null },
+  },
 }, {
   timestamps: true,
   collection: 'whatsapp-contacts',

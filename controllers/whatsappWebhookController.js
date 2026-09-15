@@ -188,14 +188,14 @@ async function recordReply({ userId, to, instance, text, providerMessageId, kind
  * `ignoreKillSwitch` (verificación: el usuario está esperando la respuesta y
  * es una conversación que él inició — gratis en Meta).
  */
-async function reply({ phone, userId, instance, text, kind, ignoreKillSwitch = false }) {
+async function reply({ phone, userId, instance, text, kind, ignoreKillSwitch = false, interactive = null }) {
   if (!ignoreKillSwitch && !policyService.isWhatsappEnabled(await policyService.getConfigCached())) return false;
   let target = instance && (await instances.findActive(instance.name));
   if (!target && userId) target = await instances.resolveForUser(userId);
   if (!target) target = (await instances.getActiveInstances())[0] || null;
   if (!target) return false;
   try {
-    const result = await sendViaInstance(target, phone, text);
+    const result = await sendViaInstance(target, phone, text, interactive ? { interactive } : {});
     await recordReply({ userId, to: phone, instance: target, text, providerMessageId: result.providerMessageId, kind });
     return true;
   } catch (error) {
@@ -276,7 +276,7 @@ async function botReply(user, event, instance) {
     return 'no_access';
   }
 
-  const answer = await bot.respond({ user, text: event.text });
+  const answer = await bot.respond({ user, text: event.text, replyId: event.replyId || null, instance });
   if (answer.countsAsFallback) {
     const fallbacks = await WhatsAppOutbox.countDocuments({
       userId: user._id, messageType: { $in: ['bot_menu', 'bot_fallback'] }, sentAt: { $gte: since },
@@ -287,7 +287,7 @@ async function botReply(user, event, instance) {
     }
   }
   if (answer.text) {
-    await reply({ phone: user.phone, userId: user._id, instance, text: answer.text, kind: answer.handledAs });
+    await reply({ phone: user.phone, userId: user._id, instance, text: answer.text, kind: answer.handledAs, interactive: answer.interactive || null });
   }
   return answer.handledAs;
 }
