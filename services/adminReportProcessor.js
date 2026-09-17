@@ -167,6 +167,7 @@ module.exports = {
   processJudicialMovementReportData,
   processLogCleanupReportData,
   buildConfigSummarySection,
+  buildWhatsappSection,
   buildSourceDistributionSection,
   processMorningDigestData,
   buildMorningDigestFallbackHtml
@@ -473,6 +474,80 @@ body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helve
  * @param {Object|null} config - doc de judicial-notification-configs (o null)
  * @returns {{html: string, text: string}}
  */
+/**
+ * Sección "Canal WhatsApp" del reporte diario (services/channels/whatsapp/report.js).
+ * Mismo lenguaje visual que la sección de configuración. Si hay alertas van
+ * arriba, en rojo.
+ */
+function buildWhatsappSection(w) {
+  if (!w) return { html: '', text: '' };
+  if (w.error && !w.instances) {
+    return {
+      html: `<div style="margin-top:24px;padding:16px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;"><h3 style="margin:0 0 6px 0;font-size:14px;color:#111827;">Canal WhatsApp</h3><p style="margin:0;font-size:12px;color:#DC2626;">No se pudo armar el resumen: ${w.error}</p></div>`,
+      text: `\n\nCANAL WHATSAPP\n- No se pudo armar el resumen: ${w.error}\n`
+    };
+  }
+  const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const pill = (text, kind) => {
+    const K = { green: ['#ECFDF5', '#059669'], amber: ['#FFFBEB', '#B45309'], gray: ['#F3F4F6', '#4B5563'], red: ['#FEF2F2', '#DC2626'], blue: ['#EFF6FF', '#1D4ED8'] }[kind] || ['#F3F4F6', '#4B5563'];
+    return `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;background-color:${K[0]};color:${K[1]};">${esc(text)}</span>`;
+  };
+  const row = (label, valueHtml) =>
+    `<tr><td style="padding:4px 10px 4px 0;font-size:12px;color:#6b7280;white-space:nowrap;vertical-align:top;">${label}</td>` +
+    `<td style="padding:4px 0;font-size:12px;color:#111827;">${valueHtml}</td></tr>`;
+  const fmtCounts = (obj, order) => {
+    const keys = [...order.filter(k => obj[k]), ...Object.keys(obj).filter(k => !order.includes(k))];
+    return keys.length ? keys.map(k => `${obj[k]} ${esc(k)}`).join(' · ') : '0';
+  };
+  const STATUS_ORDER = ['read', 'delivered', 'sent', 'pending', 'failed', 'expired'];
+  const KIND_ORDER = ['verification', 'opt_out', 'bot_novedades', 'bot_semana', 'bot_buscar', 'bot_cedulas', 'bot_vencimientos', 'bot_agenda', 'bot_cuenta', 'bot_menu', 'bot_fallback', 'no_access', 'ignored_unknown'];
+
+  const digests = w.digests || {};
+  const replies = w.replies || {};
+  const inbound = w.inbound || {};
+  const t = w.template || {};
+  const tplKind = t.status === 'APPROVED' ? (t.category === 'MARKETING' ? 'amber' : 'green') : (t.status === 'PENDING' ? 'amber' : 'red');
+  const lines = (w.instances || []).map(i =>
+    `${esc(i.name)} ${pill(i.status, i.status === 'connected' ? 'green' : 'red')}${i.enabled ? '' : ' ' + pill('deshabilitada', 'gray')}${i.quality ? ' ' + pill('calidad ' + i.quality, /GREEN|UNFLAGGED|UPGRADE/.test(i.quality) ? 'green' : 'red') : ''} <span style="color:#6b7280;">${esc(i.provider)}</span>`
+  ).join('<br>') || 'ninguna registrada';
+
+  const alertsHtml = (w.alerts || []).length
+    ? `<div style="margin:0 0 12px 0;padding:10px 12px;background-color:#FEF2F2;border:1px solid #FECACA;border-radius:8px;">` +
+      `<div style="font-size:12px;font-weight:700;color:#DC2626;margin-bottom:4px;">Atención</div>` +
+      w.alerts.map(a => `<div style="font-size:12px;color:#991B1B;line-height:1.5;">• ${esc(a)}</div>`).join('') + `</div>`
+    : '';
+  const failedHtml = (w.failed || []).length
+    ? row('Últimos fallos', w.failed.map(f => `${esc(f.type)} (${esc(f.status)})${f.reason ? ': ' + esc(String(f.reason).slice(0, 140)) : ''}`).join('<br>'))
+    : '';
+
+  const html = `
+  <div style="margin-top:24px;padding:16px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <h3 style="margin:0 0 2px 0;font-size:14px;color:#111827;">Canal WhatsApp</h3>
+    <p style="margin:0 0 12px 0;font-size:11px;color:#9ca3af;">Actividad de hoy. Detalle en dashboard.lawanalytics.app → Notificaciones → Configuración → Conversaciones de WhatsApp.</p>
+    ${alertsHtml}
+    <div style="border:1px solid #e5e7eb;border-radius:8px;background-color:#ffffff;padding:12px 14px;">
+      <table style="border-collapse:collapse;width:100%;">
+        ${row('Canal', `${pill(w.channelEnabled ? 'Encendido' : 'Apagado', w.channelEnabled ? 'green' : 'gray')} <span style="color:#6b7280;">inscripción ${w.openEnrollment ? 'abierta a todos' : 'piloto (por grant)'}</span>`)}
+        ${row('Usuarios', `${w.users?.active ?? 0} con avisos activos <span style="color:#6b7280;">de ${w.users?.verified ?? 0} con número verificado</span>`)}
+        ${row('Avisos de novedades', fmtCounts(digests, STATUS_ORDER))}
+        ${row('Respuestas (bot / sistema)', fmtCounts(replies, STATUS_ORDER))}
+        ${row('Mensajes entrantes', fmtCounts(inbound, KIND_ORDER))}
+        ${row('Líneas', lines)}
+        ${row('Plantilla', `${esc(t.name || '-')} ${pill(t.status || 'sin dato', tplKind)}${t.category ? ' ' + pill(t.category, t.category === 'MARKETING' ? 'amber' : 'blue') : ''}`)}
+        ${failedHtml}
+      </table>
+    </div>
+  </div>`;
+
+  const text = '\n\nCANAL WHATSAPP (hoy)\n' +
+    ((w.alerts || []).length ? w.alerts.map(a => `! ${a}`).join('\n') + '\n' : '') +
+    `- Canal: ${w.channelEnabled ? 'encendido' : 'apagado'} · inscripción ${w.openEnrollment ? 'abierta' : 'piloto'} · usuarios activos ${w.users?.active ?? 0}/${w.users?.verified ?? 0}\n` +
+    `- Avisos: ${fmtCounts(digests, STATUS_ORDER)} · Respuestas: ${fmtCounts(replies, STATUS_ORDER)} · Entrantes: ${fmtCounts(inbound, KIND_ORDER)}\n` +
+    `- Líneas: ${(w.instances || []).map(i => `${i.name} ${i.status}${i.enabled ? '' : ' (deshabilitada)'}`).join(', ') || 'ninguna'} · Plantilla ${t.name || '-'}: ${t.status || 'sin dato'}${t.category ? ' / ' + t.category : ''}\n`;
+
+  return { html, text, hasAlerts: (w.alerts || []).length > 0 };
+}
+
 function buildConfigSummarySection(config) {
   if (!config) {
     return {

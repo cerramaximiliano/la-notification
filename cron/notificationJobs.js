@@ -1018,14 +1018,23 @@ async function judicialMovementNotificationJob() {
 
       // Anexar al reporte: distribución por fuente (torta) + configuración
       // vigente (informativo) — cada reporte documenta con qué config corrió.
-      const { buildConfigSummarySection, buildSourceDistributionSection } = require('../services/adminReportProcessor');
+      const { buildConfigSummarySection, buildSourceDistributionSection, buildWhatsappSection } = require('../services/adminReportProcessor');
       const distSection = buildSourceDistributionSection(sourceDistribution);
       const configSection = buildConfigSummarySection(reportConfig);
-      const appendedHtml = distSection.html + configSection.html;
+      // Canal WhatsApp: actividad de hoy + alertas (fallidos, línea caída,
+      // plantilla). Best-effort: sin esto el reporte sale igual.
+      let whatsappSection = { html: '', text: '' };
+      try {
+        const { getDailySummary } = require('../services/channels/whatsapp/report');
+        whatsappSection = buildWhatsappSection(await getDailySummary());
+      } catch (waReportError) {
+        logger.warn(`[REPORTE] No se pudo armar la sección de WhatsApp: ${waReportError.message}`);
+      }
+      const appendedHtml = whatsappSection.html + distSection.html + configSection.html;
       const htmlWithConfig = processedTemplate.html.includes('</body>')
         ? processedTemplate.html.replace(/<\/body>/i, `${appendedHtml}</body>`)
         : processedTemplate.html + appendedHtml;
-      const textWithConfig = (processedTemplate.text || '') + distSection.text + configSection.text;
+      const textWithConfig = (processedTemplate.text || '') + whatsappSection.text + distSection.text + configSection.text;
 
       await sendEmail(
         adminEmail,

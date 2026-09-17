@@ -227,6 +227,13 @@ inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan 
   detalle de cada movimiento desde el botón."). El nombre lo fija
   `WHATSAPP_META_TEMPLATE_DIGEST` (default `movimientos_carpetas`). Meta no permite una
   variable al final del cuerpo ni reutilizar un nombre mientras purga la plantilla borrada.
+- **Monitoreo en el reporte diario (2026-09-17)**: `services/channels/whatsapp/report.js`
+  (`getDailySummary`) + `adminReportProcessor.buildWhatsappSection` agregan la sección "Canal
+  WhatsApp" al email "Reporte de Movimientos Judiciales": avisos/respuestas por estado,
+  entrantes por tipo, líneas, usuarios activos, estado y categoría de la plantilla (consulta
+  a Graph con el `wabaId` de la línea o `WHATSAPP_META_WABA_ID`) y un bloque rojo de alertas
+  (fallidos/vencidos, canal sin línea en rotación, pendientes >2 h, plantilla no aprobada o
+  MARKETING, calidad FLAGGED). Best-effort: si falla, el reporte sale igual.
 - v2 (pendiente): Claude con tools de la-mcp-server (carpetas, movimientos, jurisprudencia,
   documentos a carpetas por media).
 
