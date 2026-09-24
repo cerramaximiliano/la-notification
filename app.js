@@ -65,7 +65,15 @@ const initializeApp = async () => {
         } catch (secretsError) {
             logger.warn(`No se pudieron cargar secrets de AWS: ${secretsError.message}. Usando .env local.`);
         }
-        dotenv.config();
+        // override: true es imprescindible. config/logger.js hace dotenv.config()
+        // al requerirse (arriba, línea 5), o sea ANTES de bajar los secretos de
+        // AWS y escribir el .env — y dotenv NO pisa lo ya cargado. Sin override,
+        // un secreto cambiado recién se aplicaba en el SEGUNDO reinicio (bug real:
+        // el 22/09/2026 el cambio de plantilla de WhatsApp no tomó efecto y los
+        // avisos siguieron saliendo con la plantilla vieja). AWS Secrets Manager
+        // es la fuente de verdad; ninguna clave del secret pisa lo que fija PM2
+        // (NODE_ENV, FORCE_COLOR).
+        dotenv.config({ override: true });
 
         const connectDB = require("./config/db");
         await connectDB();
