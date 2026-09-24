@@ -4,6 +4,8 @@ const logger = require('../config/logger');
 const { verifyServiceToken } = require('../middleware/auth');
 const otp = require('../services/channels/whatsapp/otp');
 const linking = require('../services/channels/whatsapp/linking');
+const metaTemplates = require('../services/channels/whatsapp/metaTemplates');
+const policyService = require('../services/notificationPolicyService');
 
 function replyLinkingError(res, error, context) {
   if (error && error.status) {
@@ -100,6 +102,27 @@ router.get('/instances/:name/state', verifyServiceToken, async (req, res) => {
     return res.json({ success: true, data });
   } catch (error) {
     return replyLinkingError(res, error, 'la consulta de estado');
+  }
+});
+
+/**
+ * GET /api/whatsapp/templates
+ * Plantillas de la WABA (nombre, estado, categoría, idioma) + los nombres que
+ * está usando hoy el canal. Lo consume la admin para elegir la plantilla del
+ * aviso sin tocar secretos.
+ * → { success, data: { templates, current: { digest, family, lang }, wabaId, error } }
+ */
+router.get('/templates', verifyServiceToken, async (req, res) => {
+  try {
+    const [{ templates, wabaId, error }, config] = await Promise.all([
+      metaTemplates.listTemplates(),
+      policyService.getConfigCached(),
+    ]);
+    const current = metaTemplates.resolveNames(config);
+    return res.json({ success: true, data: { templates, current, wabaId, error } });
+  } catch (error) {
+    logger.error(`[whatsapp] listar plantillas: ${error.message}`);
+    return res.status(500).json({ success: false, message: 'Error listando plantillas de WhatsApp' });
   }
 });
 

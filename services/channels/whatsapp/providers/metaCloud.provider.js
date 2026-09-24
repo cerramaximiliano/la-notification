@@ -108,8 +108,9 @@ function isTemplateError(error) {
  * si WHATSAPP_META_TEMPLATE_DIGEST_FAMILY está definida y el builder trajo
  * `lines`; si no, la plantilla única de 2 variables (count, folders) + botón URL.
  */
-function buildDigestTemplate(templateParams, { legacy = false } = {}) {
-  const family = legacy ? null : templateDigestFamily();
+function buildDigestTemplate(templateParams, { legacy = false, names = null } = {}) {
+  const single = names?.digest || templateDigest();
+  const family = legacy ? null : (names ? names.family : templateDigestFamily());
   if (family && Array.isArray(templateParams.lines) && templateParams.lines.length > 0) {
     const variant = Math.min(Math.max(templateParams.variant || templateParams.lines.length, 1), 3);
     const components = [
@@ -138,7 +139,7 @@ function buildDigestTemplate(templateParams, { legacy = false } = {}) {
   if (templateParams.ctaSuffix) {
     components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(templateParams.ctaSuffix) }] });
   }
-  return { name: templateDigest(), components };
+  return { name: single, components };
 }
 
 /**
@@ -146,7 +147,7 @@ function buildDigestTemplate(templateParams, { legacy = false } = {}) {
  * cerrada, la plantilla del digest con `templateParams` ({ count, folders,
  * ctaSuffix }); sin plantilla posible → error permanente.
  */
-async function sendMessage(instance, to, text, { templateParams = null, forceTemplate = false, interactive = null } = {}) {
+async function sendMessage(instance, to, text, { templateParams = null, forceTemplate = false, interactive = null, templateNames = null } = {}) {
   requireConfigured(instance);
   const contact = await WhatsAppContact.findOne({ phone: to }).lean();
   const windowOpen = WhatsAppContact.isServiceWindowOpen(contact);
@@ -169,16 +170,17 @@ async function sendMessage(instance, to, text, { templateParams = null, forceTem
     providerMessageId = await post(instance, { to: toWaId(to), type: 'text', text: { body: text, preview_url: false } });
     kind = 'text';
   } else if (templateParams) {
-    const { name, components } = buildDigestTemplate(templateParams);
+    const lang = templateNames?.lang || templateLang();
+    const { name, components } = buildDigestTemplate(templateParams, { names: templateNames });
     const send = (tpl) => post(instance, {
       to: toWaId(to),
       type: 'template',
-      template: { name: tpl.name, language: { code: templateLang() }, components: tpl.components },
+      template: { name: tpl.name, language: { code: lang }, components: tpl.components },
     });
     try {
       providerMessageId = await send({ name, components });
     } catch (error) {
-      const fallback = buildDigestTemplate(templateParams, { legacy: true });
+      const fallback = buildDigestTemplate(templateParams, { legacy: true, names: templateNames });
       if (!isTemplateError(error) || fallback.name === name) throw error;
       logger.warn(`Plantilla '${name}' no disponible (${error.message}); se reintenta con '${fallback.name}'`);
       providerMessageId = await send(fallback);

@@ -6,6 +6,7 @@ const { isConfigured: evolutionConfigured } = require('../../../config/evolution
 const { isConfigured: metaConfigured } = require('../../../config/meta');
 const policyService = require('../../notificationPolicyService');
 const { sendViaInstance, isPermanentSendError } = require('./providers');
+const metaTemplates = require('./metaTemplates');
 const instances = require('./instances');
 
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
@@ -197,7 +198,11 @@ async function processPending(batchSize = 20) {
 
     const expiryCutoff = new Date(Date.now() - MAX_AGE_HOURS * 60 * 60 * 1000);
     const sentToday = await sentTodayCounter();
-    const channelEnabled = policyService.isWhatsappEnabled(await policyService.getConfigCached());
+    const config = await policyService.getConfigCached();
+    const channelEnabled = policyService.isWhatsappEnabled(config);
+    // Nombres de plantilla vigentes (admin → env). Se resuelven una vez por
+    // corrida: todos los envíos del lote usan la misma configuración.
+    const templateNames = metaTemplates.resolveNames(config);
     let attempted = 0;
 
     for (const doc of pending) {
@@ -248,7 +253,7 @@ async function processPending(batchSize = 20) {
       attempted += 1;
 
       try {
-        const result = await sendViaInstance(instance, doc.to, doc.text, { templateParams: doc.templateParams });
+        const result = await sendViaInstance(instance, doc.to, doc.text, { templateParams: doc.templateParams, templateNames });
         await markSent(doc, result);
         summary.sent += 1;
       } catch (error) {

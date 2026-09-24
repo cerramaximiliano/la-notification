@@ -294,6 +294,18 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         }
     },
 
+    // Plantillas de WhatsApp (Meta) del aviso de novedades. No son secretos:
+    // son nombres de plantillas ya creadas en la WABA. Se eligen desde la admin
+    // (hub: models/judicial-notification-config.js declara lo mismo); acá se
+    // declaran para que Mongoose NO las descarte al leer bajo strict mode.
+    // Vacío = se usan las env WHATSAPP_META_TEMPLATE_* como respaldo.
+    // Las resuelve services/channels/whatsapp/metaTemplates.js.
+    whatsappTemplates: {
+        digest: { type: String, default: null, trim: true },
+        digestFamily: { type: String, default: null, trim: true },
+        lang: { type: String, default: null, trim: true }
+    },
+
     // Estadísticas
     stats: {
         lastNotificationSentAt: {

@@ -246,6 +246,20 @@ inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan 
   renglón, y como todas deben ir llenas hacen falta 3 variantes. `aviso_movimientos_cuenta`
   (UTILITY, una variable) queda de respaldo; `movimientos_carpetas` es MARKETING y Meta
   rechazó un envío con ella por el tope de marketing por usuario (18/09).
+- **Plantillas administrables desde la admin (2026-09-24)**: los nombres dejaron de ser
+  secreto. Viven en `judicial-notification-configs.whatsappTemplates` (`digest`,
+  `digestFamily`, `lang`), declarado en los DOS modelos (hub y la-notification — con strict
+  Mongoose los descarta si falta). `services/channels/whatsapp/metaTemplates.js` los resuelve
+  (config → env → default) y lista las plantillas de la WABA;
+  `GET /api/whatsapp/templates` (M2M) las expone, admin-api las proxea en
+  `GET /api/judicial-notification-config/whatsapp-templates` y la tarjeta
+  "Plantillas de WhatsApp" de la admin permite elegir plantilla, familia e idioma: solo deja
+  seleccionar las APROBADAS, marca las que están **en revisión** y las recategorizadas por
+  Meta (`previous_category`), y avisa si alguna es MARKETING. Toma efecto en ≤60 s (cache del
+  policyService), sin deploy ni reinicio. El outbox resuelve los nombres una vez por corrida
+  y se los pasa al provider. Si la plantilla elegida no está disponible (error 132xxx de
+  Graph: en revisión, pausada, inexistente) el envío se reintenta solo con la plantilla única
+  aprobada, así se puede dejar elegida una familia que Meta todavía está revisando.
 - v2 (pendiente): Claude con tools de la-mcp-server (carpetas, movimientos, jurisprudencia,
   documentos a carpetas por media).
 
