@@ -93,14 +93,23 @@ async function post(instance, payload) {
 // Payload del botón de respuesta rápida "Ver lista completa" (lo interpreta el bot).
 const QUICK_REPLY_FULL_LIST = 'lista_completa';
 
+// Errores 132xxx de Graph = problema con la PLANTILLA (no existe todavía, está
+// en revisión, pausada, o los parámetros no coinciden). Si la familia por
+// líneas aún no está aprobada, no se pierde el aviso: se reintenta con la
+// plantilla única ya aprobada (WHATSAPP_META_TEMPLATE_DIGEST).
+function isTemplateError(error) {
+  const code = error?.details?.code;
+  return Number.isInteger(code) && code >= 132000 && code < 133000;
+}
+
 /**
  * Plantilla del digest: familia por líneas (aviso_novedades_1/2/3: resumen,
  * cantidad de carpetas, una variable por línea, botón URL + respuesta rápida)
  * si WHATSAPP_META_TEMPLATE_DIGEST_FAMILY está definida y el builder trajo
  * `lines`; si no, la plantilla única de 2 variables (count, folders) + botón URL.
  */
-function buildDigestTemplate(templateParams) {
-  const family = templateDigestFamily();
+function buildDigestTemplate(templateParams, { legacy = false } = {}) {
+  const family = legacy ? null : templateDigestFamily();
   if (family && Array.isArray(templateParams.lines) && templateParams.lines.length > 0) {
     const variant = Math.min(Math.max(templateParams.variant || templateParams.lines.length, 1), 3);
     const components = [
@@ -161,11 +170,19 @@ async function sendMessage(instance, to, text, { templateParams = null, forceTem
     kind = 'text';
   } else if (templateParams) {
     const { name, components } = buildDigestTemplate(templateParams);
-    providerMessageId = await post(instance, {
+    const send = (tpl) => post(instance, {
       to: toWaId(to),
       type: 'template',
-      template: { name, language: { code: templateLang() }, components },
+      template: { name: tpl.name, language: { code: templateLang() }, components: tpl.components },
     });
+    try {
+      providerMessageId = await send({ name, components });
+    } catch (error) {
+      const fallback = buildDigestTemplate(templateParams, { legacy: true });
+      if (!isTemplateError(error) || fallback.name === name) throw error;
+      logger.warn(`Plantilla '${name}' no disponible (${error.message}); se reintenta con '${fallback.name}'`);
+      providerMessageId = await send(fallback);
+    }
     kind = 'template';
   } else {
     throw new MetaSendError('Ventana de 24 h cerrada y el mensaje no tiene versión de plantilla', { permanent: true });
