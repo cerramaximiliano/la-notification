@@ -5,6 +5,14 @@ const DEFAULT_FRONT_BASE_URL = process.env.FRONT_BASE_URL || 'https://www.lawana
 // un estudio grande tenga 40 carpetas con novedades el mismo día.
 const MAX_LISTED = 10;
 const DIGEST_CTA_PATH = 'apps/folders/list?source=whatsapp_movimiento';
+// Largo máximo del nombre de carpeta en las plantillas por línea (WhatsApp
+// corta visualmente las líneas largas en el celular).
+const LINE_NAME_MAX = 60;
+
+function truncateName(value, max) {
+  const v = cleanName(value);
+  return v.length > max ? `${v.slice(0, max - 1)}…` : v;
+}
 
 function cleanName(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -79,10 +87,27 @@ function buildMovementDigestTemplateParams(movementsByExpediente, options = {}) 
 
   const items = entries.slice(0, MAX_LISTED).map((entry) => `${entry.nombre} (${describeCounts(entry, { short: true })})`);
   if (total > MAX_LISTED) items.push(`y ${total - MAX_LISTED} más`);
+
+  // Variante "una carpeta por línea" (plantillas aviso_novedades_1/2/3): resumen
+  // + cantidad de carpetas + hasta 3 líneas; con más de 3 carpetas la tercera
+  // línea es "…y N carpetas más" y el botón "Ver lista completa" trae el resto.
+  const totalMov = entries.reduce((a, e) => a + e.cantidad, 0);
+  const totalCed = entries.reduce((a, e) => a + e.cedulas, 0);
+  const summaryParts = [];
+  if (totalMov > 0) summaryParts.push(`${totalMov} ${totalMov === 1 ? 'movimiento nuevo' : 'movimientos nuevos'}`);
+  if (totalCed > 0) summaryParts.push(`${totalCed} ${totalCed === 1 ? 'cédula' : 'cédulas'}`);
+  const lineFor = (entry) => `${truncateName(entry.nombre, LINE_NAME_MAX)} — ${describeCounts(entry)}`;
+  let lines;
+  if (total <= 3) lines = entries.map(lineFor);
+  else lines = [lineFor(entries[0]), lineFor(entries[1]), `…y ${total - 2} carpetas más`];
+
   return {
     count: String(total),
     folders: items.join(', ').replace(/[\n\r\t]+/g, ' ').replace(/ {4,}/g, '   '),
     ctaSuffix: DIGEST_CTA_PATH,
+    summary: summaryParts.join(' y '),
+    lines: lines.map(l => l.replace(/[\n\r\t]+/g, ' ').replace(/ {4,}/g, '   ')),
+    variant: Math.min(total, 3),
   };
 }
 

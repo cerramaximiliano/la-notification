@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { client, isConfigured, templateDigest, templateLang } = require('../../../../config/meta');
+const { client, isConfigured, templateDigest, templateDigestFamily, templateLang } = require('../../../../config/meta');
 const logger = require('../../../../config/logger');
 const { WhatsAppContact } = require('../../../../models');
 
@@ -90,6 +90,48 @@ async function post(instance, payload) {
   }
 }
 
+// Payload del botón de respuesta rápida "Ver lista completa" (lo interpreta el bot).
+const QUICK_REPLY_FULL_LIST = 'lista_completa';
+
+/**
+ * Plantilla del digest: familia por líneas (aviso_novedades_1/2/3: resumen,
+ * cantidad de carpetas, una variable por línea, botón URL + respuesta rápida)
+ * si WHATSAPP_META_TEMPLATE_DIGEST_FAMILY está definida y el builder trajo
+ * `lines`; si no, la plantilla única de 2 variables (count, folders) + botón URL.
+ */
+function buildDigestTemplate(templateParams) {
+  const family = templateDigestFamily();
+  if (family && Array.isArray(templateParams.lines) && templateParams.lines.length > 0) {
+    const variant = Math.min(Math.max(templateParams.variant || templateParams.lines.length, 1), 3);
+    const components = [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: String(templateParams.summary || templateParams.count) },
+          { type: 'text', text: String(templateParams.count) },
+          ...templateParams.lines.slice(0, variant).map(l => ({ type: 'text', text: String(l) })),
+        ],
+      },
+      { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(templateParams.ctaSuffix || '') }] },
+      { type: 'button', sub_type: 'quick_reply', index: '1', parameters: [{ type: 'payload', payload: QUICK_REPLY_FULL_LIST }] },
+    ];
+    return { name: `${family}_${variant}`, components };
+  }
+  const components = [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: String(templateParams.count) },
+        { type: 'text', text: String(templateParams.folders) },
+      ],
+    },
+  ];
+  if (templateParams.ctaSuffix) {
+    components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(templateParams.ctaSuffix) }] });
+  }
+  return { name: templateDigest(), components };
+}
+
 /**
  * Envía a `to`. Con la ventana de 24 h abierta manda texto libre; si está
  * cerrada, la plantilla del digest con `templateParams` ({ count, folders,
@@ -118,22 +160,11 @@ async function sendMessage(instance, to, text, { templateParams = null, forceTem
     providerMessageId = await post(instance, { to: toWaId(to), type: 'text', text: { body: text, preview_url: false } });
     kind = 'text';
   } else if (templateParams) {
-    const components = [
-      {
-        type: 'body',
-        parameters: [
-          { type: 'text', text: String(templateParams.count) },
-          { type: 'text', text: String(templateParams.folders) },
-        ],
-      },
-    ];
-    if (templateParams.ctaSuffix) {
-      components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(templateParams.ctaSuffix) }] });
-    }
+    const { name, components } = buildDigestTemplate(templateParams);
     providerMessageId = await post(instance, {
       to: toWaId(to),
       type: 'template',
-      template: { name: templateDigest(), language: { code: templateLang() }, components },
+      template: { name, language: { code: templateLang() }, components },
     });
     kind = 'template';
   } else {
@@ -280,4 +311,4 @@ async function downloadMedia(mediaId) {
   return { buffer: Buffer.from(file.data), mimeType: meta.mime_type, size: meta.file_size, sha256: meta.sha256 };
 }
 
-module.exports = { sendMessage, parseWebhook, verifyChallenge, verifyWebhook, getPhoneNumberInfo, downloadMedia, MetaSendError, toE164, toWaId };
+module.exports = { sendMessage, parseWebhook, verifyChallenge, verifyWebhook, getPhoneNumberInfo, downloadMedia, MetaSendError, toE164, toWaId, buildDigestTemplate, QUICK_REPLY_FULL_LIST };

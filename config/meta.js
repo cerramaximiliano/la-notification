@@ -31,5 +31,10 @@ const isConfigured = () => Boolean(process.env.WHATSAPP_META_ACCESS_TOKEN);
 
 const templateDigest = () => process.env.WHATSAPP_META_TEMPLATE_DIGEST || 'movimientos_carpetas';
 const templateLang = () => process.env.WHATSAPP_META_TEMPLATE_LANG || 'es_AR';
+// Familia de plantillas "una carpeta por línea" (aviso_novedades_1/2/3): si está
+// definida, el digest usa `${familia}_${1|2|3}` según la cantidad de carpetas y
+// manda una variable por línea + botón de respuesta rápida "Ver lista completa".
+// Vacía → plantilla única (WHATSAPP_META_TEMPLATE_DIGEST) con 2 variables.
+const templateDigestFamily = () => (process.env.WHATSAPP_META_TEMPLATE_DIGEST_FAMILY || '').trim() || null;
 
-module.exports = { client, isConfigured, templateDigest, templateLang, GRAPH_VERSION };
+module.exports = { client, isConfigured, templateDigest, templateDigestFamily, templateLang, GRAPH_VERSION };

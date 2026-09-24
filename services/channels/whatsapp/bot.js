@@ -25,7 +25,7 @@
  */
 
 const logger = require('../../../config/logger');
-const { JudicialMovement, JudicialCedula, Task, Event, Folder, WhatsAppContact } = require('../../../models');
+const { JudicialMovement, JudicialCedula, Task, Event, Folder, WhatsAppContact, WhatsAppOutbox } = require('../../../models');
 const { buildMovementDigestText } = require('./templates');
 const { resolveAccess } = require('./access');
 
@@ -63,10 +63,16 @@ function normalize(text) {
 /**
  * @returns {{ intent: string, arg?: string }}  intent = id del menú | 'fallback'
  */
+// Botón "Ver lista completa" de la plantilla del aviso (payload) o su texto.
+const FULL_LIST_PAYLOAD = 'lista_completa';
+const FULL_LIST_WORDS = new Set(['LISTA', 'LISTA COMPLETA', 'VER LISTA COMPLETA', 'VER LISTA', 'COMPLETA']);
+
 function detectIntent(text, replyId = null) {
+  if (replyId === FULL_LIST_PAYLOAD) return { intent: 'lista' };
   if (replyId && MENU_BY_ID[replyId]) return { intent: replyId };
   const norm = normalize(text);
   if (!norm) return { intent: 'fallback' };
+  if (FULL_LIST_WORDS.has(norm)) return { intent: 'lista' };
   const byNumber = MENU.find(m => String(m.n) === norm);
   if (byNumber) return { intent: byNumber.id };
   for (const m of MENU) if (m.words.includes(norm)) return { intent: m.id };
@@ -299,6 +305,20 @@ async function cuenta(user, instance) {
   ].filter(l => l !== null).join('\n');
 }
 
+/**
+ * "Ver lista completa": el texto libre del último aviso enviado al usuario
+ * (WhatsAppOutbox guarda la versión completa con todas las carpetas, sin el
+ * recorte de la plantilla). Si no hay aviso reciente, cae a "novedades".
+ */
+async function listaCompleta(userId) {
+  const last = await WhatsAppOutbox.findOne({
+    userId, messageType: 'judicial_movement_digest', status: { $in: ['sent', 'delivered', 'read'] },
+    createdAt: { $gte: new Date(Date.now() - 7 * DAY_MS) },
+  }).sort({ createdAt: -1 }).select('text createdAt').lean();
+  if (!last?.text) return novedades(userId);
+  return `Último aviso (${fmtDate(last.createdAt)}):\n\n${last.text}`;
+}
+
 function ayudaText(name) {
   const saludo = name ? `Hola ${name}.` : 'Hola.';
   return [
@@ -363,6 +383,7 @@ async function respond({ user, text, replyId = null, instance = null }) {
   try {
     switch (intent) {
       case 'novedades': return { handledAs: 'bot_novedades', text: await novedades(user._id), countsAsFallback: false };
+      case 'lista': return { handledAs: 'bot_lista_completa', text: await listaCompleta(user._id), countsAsFallback: false };
       case 'semana': return { handledAs: 'bot_semana', text: await semana(user._id), countsAsFallback: false };
       case 'buscar':
         if (!arg) {

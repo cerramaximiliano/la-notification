@@ -234,6 +234,18 @@ inscripción abierta (`status.whatsappOpenEnrollment`, solo en el hub) → plan 
   a Graph con el `wabaId` de la línea o `WHATSAPP_META_WABA_ID`) y un bloque rojo de alertas
   (fallidos/vencidos, canal sin línea en rotación, pendientes >2 h, plantilla no aprobada o
   MARKETING, calidad FLAGGED). Best-effort: si falla, el reporte sale igual.
+- **Plantillas por línea (2026-09-23)**: `aviso_novedades_1/2/3` (UTILITY, encabezado
+  "Novedades en tus expedientes", cuerpo "Hay {{1}} en {{2}} de tus carpetas:" + una variable
+  por línea "▪ {{n}}", botones **Ver movimientos** (URL dinámica) y **Ver lista completa**
+  (respuesta rápida, payload `lista_completa`). El provider elige `${familia}_${1|2|3}` según
+  la cantidad de carpetas cuando `WHATSAPP_META_TEMPLATE_DIGEST_FAMILY` está definida (con
+  más de 3 carpetas la tercera línea es "…y N carpetas más"); sin la variable, plantilla única
+  de 2 variables. El bot responde al botón (o a "lista completa") con el texto libre del último
+  aviso guardado en el outbox (todas las carpetas, con viñetas). Motivo: las variables de Meta
+  no admiten saltos de línea; la única forma de una carpeta por línea es una variable por
+  renglón, y como todas deben ir llenas hacen falta 3 variantes. `aviso_movimientos_cuenta`
+  (UTILITY, una variable) queda de respaldo; `movimientos_carpetas` es MARKETING y Meta
+  rechazó un envío con ella por el tope de marketing por usuario (18/09).
 - v2 (pendiente): Claude con tools de la-mcp-server (carpetas, movimientos, jurisprudencia,
   documentos a carpetas por media).
 
