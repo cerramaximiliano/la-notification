@@ -352,7 +352,7 @@ async function comprehensiveCleanupJob() {
  */
 async function sendCleanupReport(results) {
   try {
-    const { sendEmail } = require('../services/email');
+    const { sendAdminEmail } = require('../services/email');
     const adminEmail = process.env.ADMIN_EMAIL;
 
     const subject = `[Sistema de Notificaciones] Reporte de Limpieza - ${moment().format('DD/MM/YYYY')}`;
@@ -400,7 +400,7 @@ async function sendCleanupReport(results) {
       ` : ''}
     `;
 
-    await sendEmail(adminEmail, subject, html, html);
+    await sendAdminEmail(adminEmail, subject, html, html);
     logger.info(`Reporte de limpieza enviado a ${adminEmail}`);
   } catch (error) {
     logger.error(`Error enviando reporte de limpieza: ${error.message}`);

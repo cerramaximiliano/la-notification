@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
-const { sendEmail } = require('../services/email');
+const { sendEmail, sendAdminEmail } = require('../services/email');
 const {
   sendCalendarNotifications,
   sendTaskNotifications,
@@ -173,7 +173,7 @@ async function calendarNotificationJob(options = {}) {
         const templateVariables = processCalendarReportData(summary);
         const processedTemplate = await getProcessedTemplate('administration', 'calendar-notifications-report', templateVariables);
         
-        await sendEmail(
+        await sendAdminEmail(
           adminEmail, 
           processedTemplate.subject, 
           processedTemplate.html, 
@@ -340,7 +340,7 @@ async function taskNotificationJob(options = {}) {
         const templateVariables = processTaskReportData(summary);
         const processedTemplate = await getProcessedTemplate('administration', 'task-notifications-report', templateVariables);
         
-        await sendEmail(
+        await sendAdminEmail(
           adminEmail, 
           processedTemplate.subject, 
           processedTemplate.html, 
@@ -507,7 +507,7 @@ async function movementNotificationJob(options = {}) {
         const templateVariables = processMovementReportData(summary);
         const processedTemplate = await getProcessedTemplate('administration', 'movement-notifications-report', templateVariables);
         
-        await sendEmail(
+        await sendAdminEmail(
           adminEmail, 
           processedTemplate.subject, 
           processedTemplate.html, 
@@ -633,7 +633,7 @@ async function clearLogsJob() {
         
         const processedTemplate = await getProcessedTemplate('administration', 'log-cleanup-report', templateVariables);
         
-        await sendEmail(
+        await sendAdminEmail(
           adminEmail, 
           processedTemplate.subject, 
           processedTemplate.html, 
@@ -1036,7 +1036,7 @@ async function judicialMovementNotificationJob() {
         : processedTemplate.html + appendedHtml;
       const textWithConfig = (processedTemplate.text || '') + whatsappSection.text + distSection.text + configSection.text;
 
-      await sendEmail(
+      await sendAdminEmail(
         adminEmail,
         processedTemplate.subject,
         htmlWithConfig,
@@ -1134,7 +1134,7 @@ async function folderInactivityNotificationJob(options = {}) {
         const templateVariables = processFolderInactivityReportData(summary);
         const processedTemplate = await getProcessedTemplate('administration', 'folder-inactivity-report', templateVariables);
 
-        await sendEmail(
+        await sendAdminEmail(
           adminEmail,
           processedTemplate.subject,
           processedTemplate.html,
@@ -1231,7 +1231,7 @@ async function morningDigestJob() {
         text = `${vars.statusText}\n${vars.timestamp}\n\n${vars.seccionesText}`;
       }
 
-      await sendEmail(process.env.ADMIN_EMAIL, subject, html, text);
+      await sendAdminEmail(process.env.ADMIN_EMAIL, subject, html, text);
       logger.info(`[Matinal] Informe unificado enviado a ${process.env.ADMIN_EMAIL}`);
     } catch (error) {
       logger.error(`[Matinal] Error enviando el informe unificado: ${error.message}`);

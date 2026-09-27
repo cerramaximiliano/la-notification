@@ -40,9 +40,9 @@ const logEmailSent = async ({ to, subject, templateName, templateCategory, sesMe
 };
 
 // `logMeta` (opcional): { templateName, templateCategory, metadata } para emaillogs.
-const sendEmail = async (to, subject, htmlBody, textBody, logMeta = {}) => {
+const sendEmail = async (to, subject, htmlBody, textBody, logMeta = {}, from = null) => {
   const params = {
-    Source: "Law||Analytics <soporte@lawanalytics.app>", // Correo verificado en AWS SES
+    Source: from || "Law||Analytics <soporte@lawanalytics.app>", // Correo verificado en AWS SES
     ConfigurationSetName: CONFIGURATION_SET,
     Destination: {
       ToAddresses: [to],
@@ -78,4 +78,10 @@ const sendEmail = async (to, subject, htmlBody, textBody, logMeta = {}) => {
   }
 };
 
-module.exports = { sendEmail };
+// Reportes y alertas al admin: salen desde admin@ (foto ocre en Gmail).
+// Las notificaciones a usuarios siguen con sendEmail desde soporte@.
+const ADMIN_FROM = process.env.ADMIN_ALERT_FROM || "Law||Analytics Sistema <admin@lawanalytics.app>";
+const sendAdminEmail = (to, subject, htmlBody, textBody, logMeta = {}) =>
+  sendEmail(to, subject, htmlBody, textBody, logMeta, ADMIN_FROM);
+
+module.exports = { sendEmail, sendAdminEmail };

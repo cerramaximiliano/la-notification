@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const moment = require("moment");
 const momentTz = require("moment-timezone");
 const logger = require("../config/logger");
-const { sendEmail } = require("./email");
+const { sendEmail, sendAdminEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder, PlanBannerSend } = require("../models");
 const policyService = require("./notificationPolicyService");
 const { sendJudicialMovementDigest } = require("./channels/whatsapp");
@@ -2374,7 +2374,7 @@ async function sendPostalAdminAlert(alert) {
         let sentCount = 0;
         for (const recipient of recipients) {
             try {
-                await sendEmail(recipient, subject, adjusted.htmlContent, adjusted.textContent);
+                await sendAdminEmail(recipient, subject, adjusted.htmlContent, adjusted.textContent);
                 sentCount++;
             } catch (sendErr) {
                 logger.error(`[PostalAdminAlert] Fallo el envío a ${recipient}: ${sendErr.message}`);
