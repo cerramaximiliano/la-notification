@@ -153,6 +153,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             tipo: movimiento.tipo,
             detalle: movimiento.detalle,
             url: movimiento.url,
+            posicionDia: Number.isFinite(movimiento.posicionDia) ? movimiento.posicionDia : undefined,
             sourceRef: movimiento.sourceRef,
             hasPdf: movimiento.hasPdf,
             esSentencia: movimiento.esSentencia
@@ -195,6 +196,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               tipo: movimiento.tipo,
               detalle: movimiento.detalle,
               url: movimiento.url,
+              posicionDia: Number.isFinite(movimiento.posicionDia) ? movimiento.posicionDia : undefined,
               sourceRef: movimiento.sourceRef,
               hasPdf: movimiento.hasPdf,
               esSentencia: movimiento.esSentencia

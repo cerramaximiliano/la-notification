@@ -1252,7 +1252,7 @@ async function sendJudicialMovementNotifications({
             userId,
             notificationStatus: 'pending',
             ...notifyAtFilter
-        }).sort({ 'movimiento.fecha': -1 });
+        }).sort({ 'movimiento.fecha': -1, 'movimiento.posicionDia': 1 }); // orden del portal dentro del día
 
         // Preferencia del usuario: movimientos DESACTIVADOS → se marcan como
         // skipped (terminal, con motivo) y el email solo lleva cédulas si hay.

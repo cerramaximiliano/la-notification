@@ -246,7 +246,8 @@ async function coordinateJudicialMovements(options = {}) {
                 fecha: new Date(movimiento.fecha),
                 tipo: movimiento.tipo,
                 detalle: movimiento.detalle,
-                url: movimiento.url
+                url: movimiento.url,
+                posicionDia: Number.isFinite(movimiento.posicionDia) ? movimiento.posicionDia : undefined
               },
               notificationSettings: {
                 notifyAt: notifyAt,

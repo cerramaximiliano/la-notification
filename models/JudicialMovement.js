@@ -34,6 +34,10 @@ const judicialMovementSchema = new mongoose.Schema({
     tipo: { type: String, required: true },
     detalle: { type: String, required: true },
     url: String,
+    // Posición dentro del día en el orden del portal (0 = la primera fila
+    // de ese día). La mandan los workers PJN; el correo ordena por
+    // fecha desc + posicionDia asc para reproducir el orden del portal.
+    posicionDia: Number,
     // Referencia del movimiento dentro de su fuente (v2 multi-fuente):
     // scba → sourceId del mirror scba-movements; eje → actId; mev → _id;
     // pjsalta → `numero` de la actuación del portal IOL.
