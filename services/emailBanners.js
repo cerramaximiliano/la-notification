@@ -13,6 +13,11 @@
  *   - Google Calendar (googleCalendarBanner): invitación a sincronizar para
  *     usuarios con googleCalendarConnected !== true. Cooldown propio (default
  *     14 días) y un solo banner promocional por email.
+ *   - Credencial PJN (credentialBanner): banner de ESTADO, no promoción. Va
+ *     en TODOS los correos mientras usuarios.pjnCredentialState.requiresAction
+ *     sea true (espejo que escribe pjn-mis-causas cuando el portal rechaza la
+ *     contraseña de forma confirmada). Sin cooldown ni registro. Cuando va,
+ *     el de plan se mantiene y feature/gcal se callan para no apilar tres.
  *
  * Uso en cada sender:
  *   const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'calendar' });
@@ -21,10 +26,14 @@
  *   await banners.recordIfShown(); // habilita el cooldown (best-effort)
  */
 
+const moment = require('moment-timezone');
 const logger = require('../config/logger');
 const policyService = require('./notificationPolicyService');
 
 const DEFAULT_FRONT_BASE_URL = 'https://www.lawanalytics.app';
+const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
+// Perfil PJN del front (misma ruta que PJN_PROFILE_PATH en pjnBindingState.ts).
+const PJN_PROFILE_PATH = '/apps/profiles/account/pjn';
 
 const EMPTY_VARS = {
   planBannerHtml: '',
@@ -34,7 +43,9 @@ const EMPTY_VARS = {
   gcalBannerHtml: '',
   gcalBannerText: '',
   optionsBannerHtml: '',
-  optionsBannerText: ''
+  optionsBannerText: '',
+  credentialBannerHtml: '',
+  credentialBannerText: ''
 };
 
 // Logo oficial de Google Calendar (asset hosteado por Google, estable desde 2020)
@@ -108,6 +119,68 @@ function buildGoogleCalendarBanner(cfg, frontBaseUrl, sourceEmail) {
   return { html, text: textVersion };
 }
 
+/** Fecha dd/mm/aaaa en hora argentina; null si no hay fecha válida. */
+function formatCredentialSince(since) {
+  if (!since) return null;
+  // Se pasa por Date antes de moment: con un string no ISO moment avisa por
+  // consola (deprecation) aunque devuelva inválido.
+  const d = since instanceof Date ? since : new Date(since);
+  if (Number.isNaN(d.getTime())) return null;
+  return moment(d).tz(DEFAULT_TIMEZONE).format('DD/MM/YYYY');
+}
+
+/**
+ * Banner de ESTADO "Credencial PJN requiere acción". Marker
+ * <!--credential-banner-->. Se arma solo cuando
+ * user.pjnCredentialState.requiresAction === true (espejo del hub que escribe
+ * pjn-mis-causas al confirmar que el portal rechazó la contraseña). No es
+ * promoción: sin cooldown ni registro en PlanBannerSend — mientras el estado
+ * persista va en todos los correos. Las causas públicas se siguen
+ * notificando; el banner avisa que las reservadas no se actualizan hasta
+ * renovar la contraseña. Mismo lenguaje visual que los otros banners (card +
+ * eyebrow + CTA), en tono de aviso. cfg (config credentialBanner) permite
+ * pisar título/texto/CTA.
+ *
+ * @param {Object} user - doc del usuario (hidratado o lean) con pjnCredentialState
+ * @param {string} frontBaseUrl
+ * @param {string} [sourceEmail='notificacion']
+ * @param {Object} [cfg] - config.credentialBanner (title, text, ctaLabel)
+ * @returns {{html: string, text: string}}
+ */
+function buildCredentialBanner(user, frontBaseUrl, sourceEmail = 'notificacion', cfg = {}) {
+  const state = user && user.pjnCredentialState;
+  if (!state || state.requiresAction !== true) {
+    return { html: '', text: '' };
+  }
+  const base = frontBaseUrl || DEFAULT_FRONT_BASE_URL;
+  const ctaUrl = `${base}${PJN_PROFILE_PATH}?source=email_${sourceEmail}_credencial`;
+  const fecha = formatCredentialSince(state.since);
+  const title = (cfg && cfg.title) || 'Tu credencial PJN requiere acción';
+  const text = (cfg && cfg.text)
+    || `El portal del PJN rechazó tu contraseña${fecha ? ` el ${fecha}` : ''}. Te seguimos avisando las novedades de tus causas públicas, pero las causas reservadas no se actualizan hasta que la actualices.`;
+  const ctaLabel = (cfg && cfg.ctaLabel) || 'Actualizar credencial';
+
+  const html = `
+      <!--credential-banner--><tr><td class="px-card" style="padding:8px 44px 16px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFF7ED;border:1px solid #FDBA74;border-radius:10px;">
+          <tr><td style="padding:18px 24px;">
+            <p style="margin:0 0 4px 0;font-size:11px;color:#C2410C;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;">Credencial PJN</p>
+            <p style="margin:0 0 6px 0;font-size:15px;line-height:1.4;color:#0F172A;font-weight:700;">${title}</p>
+            <p style="margin:0 0 14px 0;font-size:13px;line-height:1.6;color:#475569;">${text}</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td bgcolor="#C2410C" style="border-radius:8px;">
+                <a href="${ctaUrl}" style="display:inline-block;padding:11px 22px;font-size:13px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:8px;">${ctaLabel}&nbsp;&#8594;</a>
+              </td>
+            </tr></table>
+          </td></tr>
+        </table>
+      </td></tr>`;
+
+  const textVersion = `\n---\n${title}\n${text}\n${ctaLabel}: ${ctaUrl}\n`;
+
+  return { html, text: textVersion };
+}
+
 /**
  * Resuelve los banners para un email de notificación al usuario.
  *
@@ -170,6 +243,7 @@ async function resolveEmailBanners(userId, user, options = {}) {
     templateVars: { ...EMPTY_VARS },
     planBannerShown: false,
     featureBannerShown: false,
+    credentialBannerShown: false,
     recordIfShown: async () => {}
   };
 
@@ -179,6 +253,28 @@ async function resolveEmailBanners(userId, user, options = {}) {
   } catch (err) {
     logger.warn(`[EmailBanners] No se pudo cargar config: ${err.message}`);
     return result;
+  }
+
+  // ---- Banner de ESTADO: credencial PJN requiere acción ----
+  // Es estado, no promoción: sin cooldown ni registro en PlanBannerSend.
+  // Mientras usuarios.pjnCredentialState.requiresAction siga en true va en
+  // todos los correos (ninguna notificación se suspende ni se filtra). Se
+  // resuelve primero porque feature y gcal se callan cuando va; el de plan se
+  // mantiene (las archivadas se avisan para que el usuario cambie de plan).
+  // Kill-switch opcional en el config doc: credentialBanner.enabled = false.
+  try {
+    const credCfg = (notifConfig && notifConfig.credentialBanner) || {};
+    if (credCfg.enabled !== false && allowedForType(credCfg, sourceEmail)) {
+      const cred = buildCredentialBanner(user, frontBase, sourceEmail, credCfg);
+      if (cred.html) {
+        result.templateVars.credentialBannerHtml = cred.html;
+        result.templateVars.credentialBannerText = cred.text;
+        result.credentialBannerShown = true;
+        logger.info(`Banner de credencial PJN para ${user?.email || userId} (${sourceEmail}): requiere acción desde ${formatCredentialSince(user?.pjnCredentialState?.since) || '?'}`);
+      }
+    }
+  } catch (err) {
+    logger.warn(`[EmailBanners] No se pudo armar el banner de credencial PJN para ${user?.email || userId}: ${err.message}`);
   }
 
   // ---- Banner de plan (carpetas archivadas) ----
@@ -254,8 +350,10 @@ async function resolveEmailBanners(userId, user, options = {}) {
     const featureParticipates = shared2.enabled !== false && participants2.includes('feature');
 
     // Bloqueos: (a) ya va el de plan en este email (salvo showWithPlanBanner),
-    // (b) tipo de email no habilitado, (c) cooldown compartido consumido.
-    const suppressedByPlan = result.planBannerShown && featureCfg.showWithPlanBanner !== true;
+    // (b) tipo de email no habilitado, (c) cooldown compartido consumido,
+    // (d) va el banner de estado de credencial PJN (no apilar tres).
+    const suppressedByPlan = (result.planBannerShown && featureCfg.showWithPlanBanner !== true)
+      || result.credentialBannerShown === true;
     let sharedBlockedFeature = false;
     if (featureParticipates && !result.planBannerShown) {
       const days2 = Number.isFinite(shared2.days) ? shared2.days : 7;
@@ -313,9 +411,11 @@ async function resolveEmailBanners(userId, user, options = {}) {
     const isTarget = user && user.googleCalendarConnected !== true;
 
     // Un solo banner promocional por email: si ya va el de plan o el de
-    // feature, este se calla (salvo override explícito del admin).
-    const suppressedByOthers = (result.planBannerShown || result.featureBannerShown)
-      && gcalCfg.showWithOtherBanners !== true;
+    // feature, este se calla (salvo override explícito del admin). El banner
+    // de estado de credencial PJN lo calla siempre (no apilar tres).
+    const suppressedByOthers = ((result.planBannerShown || result.featureBannerShown)
+      && gcalCfg.showWithOtherBanners !== true)
+      || result.credentialBannerShown === true;
 
     if (gcalCfg.enabled !== false && isTarget && !suppressedByOthers && allowedForType(gcalCfg, sourceEmail)) {
       const { PlanBannerSend } = require('../models');
@@ -389,6 +489,20 @@ async function resolveEmailBanners(userId, user, options = {}) {
  */
 function applyBannerFallback(htmlContent, textContent, banners) {
   const vars = banners.templateVars || EMPTY_VARS;
+  // El de credencial es ESTADO, no promoción: si la plantilla no tiene el slot se
+  // inyecta ARRIBA del contenido (justo después de <body>), no al pie con los
+  // promocionales, para que el aviso se vea antes que las novedades.
+  const credMissing = vars.credentialBannerHtml && !htmlContent.includes('<!--credential-banner-->') ? vars.credentialBannerHtml : null;
+  if (credMissing) {
+    const credBlock = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;">${credMissing}</table>`;
+    if (/<body[^>]*>/i.test(htmlContent)) {
+      htmlContent = htmlContent.replace(/<body[^>]*>/i, (m) => `${m}${credBlock}`);
+    } else if (/<\/body>/i.test(htmlContent)) {
+      htmlContent = htmlContent.replace(/<\/body>/i, `${credBlock}</body>`);
+    } else {
+      htmlContent = credBlock + htmlContent;
+    }
+  }
   const missing = [
     vars.planBannerHtml && !htmlContent.includes('<!--plan-banner-->') ? vars.planBannerHtml : null,
     vars.featureBannerHtml && !htmlContent.includes('<!--feature-banner-->') ? vars.featureBannerHtml : null,
@@ -401,6 +515,10 @@ function applyBannerFallback(htmlContent, textContent, banners) {
     htmlContent = /<\/body>/i.test(htmlContent)
       ? htmlContent.replace(/<\/body>/i, `${bannerBlock}</body>`)
       : htmlContent + bannerBlock;
+  }
+  const credentialTitleLine = vars.credentialBannerText ? (vars.credentialBannerText.trim().split('\n')[1] || null) : null;
+  if (vars.credentialBannerText && credentialTitleLine && !textContent.includes(credentialTitleLine)) {
+    textContent = textContent + vars.credentialBannerText;
   }
   if (vars.planBannerText && !textContent.includes('Mejorar mi plan:')) {
     textContent = textContent + vars.planBannerText;
@@ -423,6 +541,7 @@ module.exports = {
   resolveEmailBanners,
   buildFeatureBanner,
   buildGoogleCalendarBanner,
+  buildCredentialBanner,
   applyBannerFallback,
   // exportados para pruebas
   resolveBannerCooldownDays,

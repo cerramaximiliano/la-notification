@@ -209,6 +209,21 @@ const UserSchema = new Schema(
       default: false
     },
 
+    // Espejo del hub, lo escribe pjn-mis-causas (la verdad vive en
+    // pjn-credentials): la credencial PJN del usuario fue rechazada por el
+    // portal de forma confirmada y hay que renovarla. Lo lee el banner de
+    // estado "Credencial PJN requiere acción" (emailBanners) — las causas
+    // públicas se siguen notificando, el banner avisa que las reservadas no
+    // se actualizan. Top-level (no en preferences: PUT /preferences pisa ese
+    // subárbol). Sin el campo en el schema, Mongoose lo descarta al leer.
+    pjnCredentialState: {
+      requiresAction: { type: Boolean, default: false },
+      reason: { type: String, default: null }, // 'credential_invalid' | 'required_action'
+      since: { type: Date, default: null },
+      credentialId: { type: mongoose.Schema.Types.ObjectId, default: null },
+      updatedAt: { type: Date, default: null }
+    },
+
     // Espejo del hub (law-analytics-server/models/User.js): teléfono verificado
     // por WhatsApp y consentimiento del canal. Solo lectura de este lado — el
     // dispatcher exige phoneVerified + optIn vigente + channels.whatsapp antes
