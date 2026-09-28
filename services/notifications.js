@@ -1252,7 +1252,12 @@ async function sendJudicialMovementNotifications({
             userId,
             notificationStatus: 'pending',
             ...notifyAtFilter
-        }).sort({ 'movimiento.fecha': -1, 'movimiento.posicionDia': 1 }); // orden del portal dentro del día
+        }).sort({ 'movimiento.fecha': -1 });
+        // Orden del portal dentro del día: posicionDia asc; los que no la traen
+        // (fuentes viejas o sin dato) van al final de su día, nunca arriba.
+        const posDe = (m) => (Number.isFinite(m?.movimiento?.posicionDia) ? m.movimiento.posicionDia : Number.MAX_SAFE_INTEGER);
+        const diaDe = (m) => (m?.movimiento?.fecha ? new Date(m.movimiento.fecha).getTime() : 0);
+        pendingMovements = pendingMovements.sort((a, b) => (diaDe(b) - diaDe(a)) || (posDe(a) - posDe(b)));
 
         // Preferencia del usuario: movimientos DESACTIVADOS → se marcan como
         // skipped (terminal, con motivo) y el email solo lleva cédulas si hay.
