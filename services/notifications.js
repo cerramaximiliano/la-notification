@@ -1312,8 +1312,9 @@ async function sendJudicialMovementNotifications({
             };
         }
 
-        // Mapa causaId → folder del usuario ({_id, archived}). Se usa para el
-        // filtro de folders archivados y después para los CTAs del email.
+        // Mapa causaId → folder del usuario ({_id, archived, causaCredentialCovered}).
+        // Se usa para el filtro de folders archivados, el corte de causas
+        // reservadas sin cobertura y después para los CTAs del email.
         const folderByCausa = {};
         let skippedCount = 0;
         let deferredCount = 0;
@@ -1322,7 +1323,7 @@ async function sendJudicialMovementNotifications({
             const causaIds = [...new Set(pendingMovements.map(m => m.expediente?.id).filter(Boolean))];
             for (const causaId of causaIds) {
                 try {
-                    const folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName').lean();
+                    const folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered').lean();
                     if (folder) folderByCausa[causaId] = folder;
                 } catch (folderErr) {
                     logger.warn(`No se pudo resolver folder para causa ${causaId}: ${folderErr.message}`);
@@ -1358,6 +1359,16 @@ async function sendJudicialMovementNotifications({
                 // (cubre el fallback de los workers a userCausaIds).
                 if (notifConfig?.limits?.requireFolderForDelivery === true && !folder) {
                     toSkip.push({ movement, reason: 'Descartado: el usuario no tiene esta causa en su cuenta (requireFolderForDelivery)' });
+                    continue;
+                }
+                // Causa reservada sin cobertura (solo fuente PJN): la carpeta
+                // del usuario tiene causaCredentialCovered === false — su
+                // credencial PJN cayó o nunca cubrió la causa. Aunque OTRA
+                // credencial siga actualizando la causa, a este usuario no se
+                // le avisa (terminal; el webhook no lo resucita a pending).
+                // Las cédulas y las otras fuentes no cambian.
+                if (source === 'pjn' && folder && folder.causaCredentialCovered === false) {
+                    toSkip.push({ movement, reason: 'Causa reservada: credencial sin cobertura' });
                     continue;
                 }
                 if (policy.notifyArchivedFolders === false && folder && folder.archived === true) {

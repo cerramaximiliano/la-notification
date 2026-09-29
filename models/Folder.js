@@ -330,6 +330,23 @@ const FolderSchema = new Schema(
       type: Date,
       required: false
     },
+    // Espejo del hub (law-analytics-server/models/Folder.js). Los escribe
+    // pjn-mis-causas (privacy-checker / recomputeFolderCoverage / reconcile);
+    // acá SOLO se leen. causaIsPrivate = la causa es reservada en el portal.
+    causaIsPrivate: {
+      type: Boolean,
+      required: false
+    },
+    // true/false SOLO en carpetas de causas reservadas (causaIsPrivate:true).
+    // false = el usuario no tiene credencial PJN vigente que cubra esta causa
+    // reservada (se le cayó o nunca la tuvo) → no se le crean ni se le envían
+    // avisos de movimientos PJN aunque OTRA credencial la siga actualizando.
+    // Ausente = causa pública (sin restricción). Sin default: lo administra
+    // el worker.
+    causaCredentialCovered: {
+      type: Boolean,
+      required: false
+    },
     lastMovementDate: {
       type: Date,
       default: null,

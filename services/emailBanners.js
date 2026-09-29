@@ -14,10 +14,12 @@
  *     usuarios con googleCalendarConnected !== true. Cooldown propio (default
  *     14 días) y un solo banner promocional por email.
  *   - Credencial PJN (credentialBanner): banner de ESTADO, no promoción. Va
- *     en TODOS los correos mientras usuarios.pjnCredentialState.requiresAction
- *     sea true (espejo que escribe pjn-mis-causas cuando el portal rechaza la
- *     contraseña de forma confirmada). Sin cooldown ni registro. Cuando va,
- *     el de plan se mantiene y feature/gcal se callan para no apilar tres.
+ *     SOLO en el correo de movimientos judiciales (sourceEmail 'movimiento';
+ *     credentialBanner.emailTypes explícito puede ampliarlo) mientras
+ *     usuarios.pjnCredentialState.requiresAction sea true (espejo que escribe
+ *     pjn-mis-causas cuando el portal rechaza la contraseña de forma
+ *     confirmada). Sin cooldown ni registro. Cuando va, el de plan se
+ *     mantiene y feature/gcal se callan para no apilar tres.
  *
  * Uso en cada sender:
  *   const banners = await resolveEmailBanners(userId, user, { sourceEmail: 'calendar' });
@@ -135,7 +137,8 @@ function formatCredentialSince(since) {
  * user.pjnCredentialState.requiresAction === true (espejo del hub que escribe
  * pjn-mis-causas al confirmar que el portal rechazó la contraseña). No es
  * promoción: sin cooldown ni registro en PlanBannerSend — mientras el estado
- * persista va en todos los correos. Las causas públicas se siguen
+ * persista va en el correo de movimientos judiciales (ver
+ * credentialBannerAllowedForType). Las causas públicas se siguen
  * notificando; el banner avisa que las reservadas no se actualizan hasta
  * renovar la contraseña. Mismo lenguaje visual que los otros banners (card +
  * eyebrow + CTA), en tono de aviso. cfg (config credentialBanner) permite
@@ -235,6 +238,23 @@ function allowedForType(cfg, sourceEmail) {
   return types.includes(sourceEmail);
 }
 
+// Tipos de correo donde va el banner de credencial PJN cuando el config no
+// trae emailTypes (o lo trae vacío — default del schema): solo el correo de
+// movimientos judiciales. Las otras plantillas de Atlas ya no tienen el slot
+// y tampoco se inyecta por fallback.
+const CREDENTIAL_BANNER_DEFAULT_TYPES = ['movimiento'];
+
+/**
+ * ¿El banner de credencial va en este tipo de email? A diferencia de
+ * allowedForType, sin emailTypes explícito NO va en todos: solo en
+ * CREDENTIAL_BANNER_DEFAULT_TYPES. Un emailTypes explícito (no vacío) en
+ * credentialBanner se respeta tal cual.
+ */
+function credentialBannerAllowedForType(cfg, sourceEmail) {
+  const explicit = cfg && Array.isArray(cfg.emailTypes) && cfg.emailTypes.length > 0 ? cfg.emailTypes : null;
+  return (explicit || CREDENTIAL_BANNER_DEFAULT_TYPES).includes(sourceEmail);
+}
+
 async function resolveEmailBanners(userId, user, options = {}) {
   const sourceEmail = options.sourceEmail || 'notificacion';
   const frontBase = process.env.FRONT_BASE_URL || DEFAULT_FRONT_BASE_URL;
@@ -258,13 +278,14 @@ async function resolveEmailBanners(userId, user, options = {}) {
   // ---- Banner de ESTADO: credencial PJN requiere acción ----
   // Es estado, no promoción: sin cooldown ni registro en PlanBannerSend.
   // Mientras usuarios.pjnCredentialState.requiresAction siga en true va en
-  // todos los correos (ninguna notificación se suspende ni se filtra). Se
-  // resuelve primero porque feature y gcal se callan cuando va; el de plan se
-  // mantiene (las archivadas se avisan para que el usuario cambie de plan).
+  // el correo de movimientos judiciales (solo 'movimiento' por default;
+  // credentialBanner.emailTypes explícito lo amplía). Se resuelve primero
+  // porque feature y gcal se callan cuando va; el de plan se mantiene (las
+  // archivadas se avisan para que el usuario cambie de plan).
   // Kill-switch opcional en el config doc: credentialBanner.enabled = false.
   try {
     const credCfg = (notifConfig && notifConfig.credentialBanner) || {};
-    if (credCfg.enabled !== false && allowedForType(credCfg, sourceEmail)) {
+    if (credCfg.enabled !== false && credentialBannerAllowedForType(credCfg, sourceEmail)) {
       const cred = buildCredentialBanner(user, frontBase, sourceEmail, credCfg);
       if (cred.html) {
         result.templateVars.credentialBannerHtml = cred.html;
@@ -542,6 +563,8 @@ module.exports = {
   buildFeatureBanner,
   buildGoogleCalendarBanner,
   buildCredentialBanner,
+  credentialBannerAllowedForType,
+  CREDENTIAL_BANNER_DEFAULT_TYPES,
   applyBannerFallback,
   // exportados para pruebas
   resolveBannerCooldownDays,

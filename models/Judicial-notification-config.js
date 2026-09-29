@@ -511,7 +511,8 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
     // usuarios con googleCalendarConnected !== true. Defaults espejados en
     // emailBanners.buildGoogleCalendarBanner — cambiarlos acá no alcanza.
     // Banner de ESTADO "Credencial PJN requiere acción" (services/emailBanners):
-    // sin cooldown; enabled=false lo apaga; emailTypes limita por tipo de correo;
+    // sin cooldown; enabled=false lo apaga; emailTypes limita por tipo de correo
+    // (vacío = default del código: SOLO 'movimiento'; explícito se respeta);
     // title/text/ctaLabel pisan el copy. Declarado para que el nodo no se pierda
     // bajo strict mode (getConfig devuelve el doc hidratado).
     credentialBanner: {

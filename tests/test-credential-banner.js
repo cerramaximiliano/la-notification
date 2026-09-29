@@ -33,7 +33,7 @@ planSuggestion.suggestPlanUpgrade = async () => ({
   suggested: { planId: 'standard', displayName: 'Plan Estándar', folderLimit: 50, price: 10, currency: 'USD' }
 });
 
-const { buildCredentialBanner, resolveEmailBanners, applyBannerFallback } = require('../services/emailBanners');
+const { buildCredentialBanner, resolveEmailBanners, applyBannerFallback, credentialBannerAllowedForType, CREDENTIAL_BANNER_DEFAULT_TYPES } = require('../services/emailBanners');
 const { processTemplate } = require('../services/templateProcessor');
 
 const colors = { reset: '\x1b[0m', green: '\x1b[32m', red: '\x1b[31m', cyan: '\x1b[36m' };
@@ -172,21 +172,58 @@ test('resolveEmailBanners: kill-switch credentialBanner.enabled=false → no sal
   assert.ok(r.templateVars.featureBannerHtml.includes('<!--feature-banner-->'), 'feature vuelve a salir');
 });
 
-test('resolveEmailBanners: sin config (null) → el banner de credencial sale igual', async () => {
+test('resolveEmailBanners: sin config (null) → el banner de credencial sale igual en el correo de movimientos', async () => {
   CONFIG = null;
-  const r = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date('2026-09-20T12:00:00Z') }), { sourceEmail: 'calendario' });
+  const r = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date('2026-09-20T12:00:00Z') }), { sourceEmail: 'movimiento' });
   assert.strictEqual(r.credentialBannerShown, true);
   assert.ok(r.templateVars.credentialBannerHtml.includes('20/09/2026'));
-  assert.ok(r.templateVars.credentialBannerHtml.includes('source=email_calendario_credencial'));
+  assert.ok(r.templateVars.credentialBannerHtml.includes('source=email_movimiento_credencial'));
 });
 
-test('resolveEmailBanners: va en todos los tipos de correo (movimiento, vencimiento, calendario, tareas, inactividad, postal)', async () => {
-  CONFIG = CONFIG_ABIERTA;
-  for (const sourceEmail of ['movimiento', 'vencimiento', 'calendario', 'tareas', 'inactividad', 'postal']) {
+test('resolveEmailBanners: por default SOLO en el correo de movimientos (vencimiento, calendario, tareas, inactividad, postal → sin banner)', async () => {
+  // Sin emailTypes, con emailTypes vacío (default del schema) y sin nodo credentialBanner.
+  for (const credentialBanner of [undefined, { enabled: true }, { enabled: true, emailTypes: [] }]) {
+    CONFIG = credentialBanner ? { ...CONFIG_ABIERTA, credentialBanner } : CONFIG_ABIERTA;
+    const mov = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail: 'movimiento' });
+    assert.strictEqual(mov.credentialBannerShown, true, 'movimiento');
+    assert.ok(mov.templateVars.credentialBannerHtml.includes('source=email_movimiento_credencial'), 'movimiento');
+    for (const sourceEmail of ['vencimiento', 'calendario', 'tareas', 'inactividad', 'postal', 'postal_admin', 'notificacion']) {
+      const r = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail });
+      assert.strictEqual(r.credentialBannerShown, false, sourceEmail);
+      assert.strictEqual(r.templateVars.credentialBannerHtml, '', sourceEmail);
+      assert.strictEqual(r.templateVars.credentialBannerText, '', sourceEmail);
+      // Sin banner de credencial, feature y gcal vuelven a salir en esos correos.
+      assert.ok(r.templateVars.featureBannerHtml.includes('<!--feature-banner-->'), `feature en ${sourceEmail}`);
+    }
+  }
+});
+
+test('resolveEmailBanners: con credentialBanner.emailTypes explícito se respeta (amplía a otros tipos o quita movimiento)', async () => {
+  CONFIG = { ...CONFIG_ABIERTA, credentialBanner: { enabled: true, emailTypes: ['movimiento', 'calendario'] } };
+  for (const sourceEmail of ['movimiento', 'calendario']) {
     const r = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail });
     assert.strictEqual(r.credentialBannerShown, true, sourceEmail);
     assert.ok(r.templateVars.credentialBannerHtml.includes(`source=email_${sourceEmail}_credencial`), sourceEmail);
   }
+  for (const sourceEmail of ['vencimiento', 'tareas', 'postal']) {
+    const r = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail });
+    assert.strictEqual(r.credentialBannerShown, false, sourceEmail);
+  }
+  // Explícito SIN movimiento: también se respeta (el default no se suma).
+  CONFIG = { ...CONFIG_ABIERTA, credentialBanner: { enabled: true, emailTypes: ['tareas'] } };
+  assert.strictEqual((await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail: 'movimiento' })).credentialBannerShown, false, 'movimiento fuera del explícito');
+  assert.strictEqual((await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail: 'tareas' })).credentialBannerShown, true, 'tareas explícito');
+});
+
+test('credentialBannerAllowedForType: default solo movimiento; emailTypes vacío = default; explícito se respeta', () => {
+  assert.deepStrictEqual(CREDENTIAL_BANNER_DEFAULT_TYPES, ['movimiento']);
+  assert.strictEqual(credentialBannerAllowedForType(undefined, 'movimiento'), true);
+  assert.strictEqual(credentialBannerAllowedForType({}, 'movimiento'), true);
+  assert.strictEqual(credentialBannerAllowedForType({ emailTypes: [] }, 'movimiento'), true);
+  assert.strictEqual(credentialBannerAllowedForType({}, 'calendario'), false);
+  assert.strictEqual(credentialBannerAllowedForType({ emailTypes: [] }, 'calendario'), false);
+  assert.strictEqual(credentialBannerAllowedForType({ emailTypes: ['calendario'] }, 'calendario'), true);
+  assert.strictEqual(credentialBannerAllowedForType({ emailTypes: ['calendario'] }, 'movimiento'), false);
 });
 
 // ---- applyBannerFallback ----
@@ -209,7 +246,7 @@ test('applyBannerFallback: plantilla SIN slot → se inyecta antes de </body> (c
 
 test('applyBannerFallback: plantilla CON slot {{credentialBannerHtml}} renderizado → no se inyecta dos veces', async () => {
   CONFIG = CONFIG_ABIERTA;
-  const banners = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail: 'tareas' });
+  const banners = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail: 'movimiento' });
   const tplHtml = '<html><body><table>{{credentialBannerHtml}}{{planBannerHtml}}</table></body></html>';
   const tplText = 'Cuerpo\n{{credentialBannerText}}{{planBannerText}}';
   const html = processTemplate(tplHtml, banners.templateVars);
@@ -218,6 +255,14 @@ test('applyBannerFallback: plantilla CON slot {{credentialBannerHtml}} renderiza
   const out = applyBannerFallback(html, text, banners);
   assert.strictEqual(out.htmlContent.split('<!--credential-banner-->').length, 2, 'una sola vez en html');
   assert.strictEqual(out.textContent.split(TITLE).length, 2, 'una sola vez en text');
+});
+
+test('applyBannerFallback: correo que NO es de movimientos (tareas) con requiresAction → no se inyecta el banner de credencial por fallback', async () => {
+  CONFIG = { bannerPolicy: { sharedCooldown: { enabled: false } }, planBanner: { enabled: false }, featureBanner: { enabled: false }, googleCalendarBanner: { enabled: false }, notificationOptionsBanner: { enabled: false } };
+  const banners = await resolveEmailBanners(USER_ID, userFake({ requiresAction: true, since: new Date() }), { sourceEmail: 'tareas' });
+  const out = applyBannerFallback('<html><body>x</body></html>', 'x', banners);
+  assert.strictEqual(out.htmlContent, '<html><body>x</body></html>');
+  assert.strictEqual(out.textContent, 'x');
 });
 
 test('applyBannerFallback: sin credencial → no agrega nada de credencial', async () => {

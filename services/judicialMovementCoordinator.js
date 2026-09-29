@@ -89,12 +89,33 @@ function filterMovementsByDate(causa, targetDate) {
  * Obtiene los usuarios vinculados a una causa a través de los Folders.
  * Con includeArchived=false (política notifyArchivedFolders desactivada)
  * solo cuentan los folders NO archivados.
+ *
+ * Causa reservada sin cobertura: las carpetas con
+ * causaCredentialCovered === false (el usuario no tiene credencial PJN
+ * vigente que cubra esa causa reservada) se excluyen — a ese usuario no se
+ * le crea el JudicialMovement aunque otra credencial siga actualizando la
+ * causa. Este coordinador solo procesa colecciones PJN (CAUSA_COLLECTIONS),
+ * así que la exclusión aplica siempre. Si se pasa `stats`, suma en
+ * stats.usuariosSinCobertura los usuarios omitidos por este motivo.
  */
-async function getUsersForCausa(Folder, causaId, includeArchived = true) {
+async function getUsersForCausa(Folder, causaId, includeArchived = true, stats = null) {
   const query = includeArchived ? { causaId } : { causaId, archived: { $ne: true } };
-  const folders = await Folder.find(query).select('userId').lean();
-  const userIds = [...new Set(folders.map(f => f.userId?.toString()).filter(Boolean))];
-  return userIds;
+  const folders = await Folder.find(query).select('userId causaCredentialCovered').lean();
+  const covered = new Set();
+  const uncovered = new Set();
+  for (const f of folders) {
+    const uid = f.userId?.toString();
+    if (!uid) continue;
+    if (f.causaCredentialCovered === false) uncovered.add(uid);
+    else covered.add(uid);
+  }
+  // Un usuario cuenta como omitido solo si NINGUNA de sus carpetas de la causa está cubierta.
+  const omitted = [...uncovered].filter(uid => !covered.has(uid));
+  if (omitted.length > 0) {
+    if (stats) stats.usuariosSinCobertura = (stats.usuariosSinCobertura || 0) + omitted.length;
+    logger.info(`[Coordinator] Causa ${causaId}: ${omitted.length} usuario(s) omitido(s) — causa reservada sin cobertura de credencial`);
+  }
+  return [...covered];
 }
 
 /**
@@ -136,6 +157,7 @@ async function coordinateJudicialMovements(options = {}) {
     movimientosDelDia: 0,
     movimientosFiltrados: 0,
     usuariosVinculados: 0,
+    usuariosSinCobertura: 0,
     notificacionesExistentes: 0,
     notificacionesCreadas: 0,
     errores: 0,
@@ -202,7 +224,7 @@ async function coordinateJudicialMovements(options = {}) {
 
       // Obtener usuarios vinculados (excluyendo folders archivados si la
       // política notifyArchivedFolders está desactivada)
-      const userIds = await getUsersForCausa(Folder, causa._id, policy.notifyArchivedFolders !== false);
+      const userIds = await getUsersForCausa(Folder, causa._id, policy.notifyArchivedFolders !== false, stats);
 
       if (userIds.length === 0) {
         continue;

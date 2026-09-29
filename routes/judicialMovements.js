@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const logger = require('../config/logger');
-const { JudicialMovement, User } = require('../models');
+const { JudicialMovement, User, Folder } = require('../models');
 const authMiddleware = require('../middleware/auth');
 const moment = require('moment');
 
@@ -28,6 +28,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       updated: 0,
       skipped: 0,
       skippedDeactivated: 0,
+      skippedReserved: 0,
       duplicates: 0,
       errors: []
     };
@@ -50,6 +51,26 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     } catch (lookupError) {
       // Best-effort: si falla el lookup se procesa todo como antes.
       logger.warn(`Webhook daily-movements: no se pudo resolver usuarios desactivados: ${lookupError.message}`);
+    }
+
+    // Causas reservadas sin cobertura (2026-09-28): la carpeta del usuario tiene
+    // causaCredentialCovered:false (su credencial PJN cayó o nunca cubrió la
+    // causa). El cron las descartaría igual ('Causa reservada: credencial sin
+    // cobertura'), pero crear el doc pending genera churn y lo deja visible en
+    // GET /pending/:userId hasta la próxima corrida (varios días si cae en día
+    // no activo). Un solo find por batch; best-effort como el de desactivados.
+    let reservedPairs = new Set();
+    try {
+      const reserved = await Folder.find(
+        { userId: { $in: batchUserIds }, causaCredentialCovered: false, causaId: { $ne: null } },
+        { userId: 1, causaId: 1 }
+      ).lean();
+      reservedPairs = new Set(reserved.map((f) => `${f.userId}|${f.causaId}`));
+      if (reservedPairs.size > 0) {
+        logger.info(`Webhook daily-movements: ${reservedPairs.size} par(es) usuario|causa reservada sin cobertura en el batch, sus movimientos PJN se omiten`);
+      }
+    } catch (lookupError) {
+      logger.warn(`Webhook daily-movements: no se pudo resolver carpetas sin cobertura: ${lookupError.message}`);
     }
 
     // Hora de notificación: usar la recibida o por defecto 9:00 AM
@@ -84,6 +105,11 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         }
         if (!expediente || !expediente.id) {
           throw new Error('expediente.id es requerido');
+        }
+        // Solo fuente PJN (default): las cédulas y otras fuentes no pasan por cobertura.
+        if ((movement.source || 'pjn') === 'pjn' && reservedPairs.has(`${userId}|${expediente.id}`)) {
+          results.skippedReserved++;
+          continue;
         }
         if (!movimiento || !movimiento.fecha) {
           throw new Error('movimiento.fecha es requerido');
@@ -136,8 +162,16 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
           //     re-detecta el mismo movimiento por cambio de key, backfill o
           //     limpieza administrativa). Sólo refrescamos metadata por si
           //     detalle/url/caratula cambió.
+          //   - skipped por "Causa reservada: credencial sin cobertura": mismo
+          //     tratamiento que sent — NO se resucita a pending; el usuario no
+          //     tiene credencial que cubra la causa y volver a encolarlo solo
+          //     lo haría caer de nuevo en skipped (o notificarlo si el enforcement
+          //     no lo viera). Los otros motivos de skipped sí se resetean.
           //   - pending / failed: resetear para que el procesador lo reintente.
           logger.info(`Movimiento existente encontrado - _id: ${existingMovement._id}, estado anterior: ${existingMovement.notificationStatus}`);
+          const skippedReserved = existingMovement.notificationStatus === 'skipped'
+            && Array.isArray(existingMovement.notifications)
+            && existingMovement.notifications.some((n) => typeof n?.details === 'string' && n.details.startsWith('Causa reservada'));
 
           existingMovement.expediente = {
             id: expediente.id,
@@ -167,6 +201,11 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             await existingMovement.save();
             logger.info(`Movimiento ya notificado — skip re-envío - uniqueKey: ${uniqueKey}`);
             results.skipped++;
+          } else if (skippedReserved) {
+            // Descartado por causa reservada sin cobertura — mantener estado, solo persistir metadata.
+            await existingMovement.save();
+            logger.info(`Movimiento descartado por causa reservada sin cobertura — no se resucita - uniqueKey: ${uniqueKey}`);
+            results.skippedReserved++;
           } else {
             existingMovement.notificationSettings = {
               notifyAt,
@@ -243,7 +282,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       }
     }
 
-    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.skippedDeactivated} de usuarios desactivados, ${results.errors.length} errores`);
+    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.skippedDeactivated} de usuarios desactivados, ${results.skippedReserved} de causas reservadas sin cobertura, ${results.errors.length} errores`);
 
     if (results.errors.length > 0) {
       logger.error(`Se encontraron ${results.errors.length} errores procesando movimientos. Ver detalles arriba.`);
