@@ -1811,7 +1811,8 @@ async function sendJudicialMovementNotifications({
                 const { sendJudicialMovementBrowserAlerts } = require('./browser');
                 const browserResult = await sendJudicialMovementBrowserAlerts({
                     userId: userId,
-                    models: { User, JudicialMovement, Alert },
+                    movementIds: notifiedMovementIds,
+                    models: { User, JudicialMovement, Alert, Folder },
                     utilities: { logger, mongoose: require('mongoose'), moment }
                 });
                 

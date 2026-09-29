@@ -448,6 +448,9 @@ async function sendJudicialMovementBrowserAlerts({
     forceDaily = false,
     userId: requestUserId,
     user: reqUser,
+    // IDs ya notificados por email en esta corrida: el caller los marca 'sent'
+    // ANTES de llamar acá, así que la consulta por status 'pending' no los ve.
+    movementIds = null,
     models,
     utilities: { logger, mongoose, moment }
 }) {
@@ -495,10 +498,9 @@ async function sendJudicialMovementBrowserAlerts({
 
         // Buscar movimientos judiciales pendientes de notificar
         // Los movimientos judiciales se notifican cuando ya ocurrieron (fecha pasada o actual)
-        const baseQuery = {
-            userId: userObjectId,
-            notificationStatus: 'pending'
-        };
+        const baseQuery = Array.isArray(movementIds) && movementIds.length > 0
+            ? { userId: userObjectId, _id: { $in: movementIds } }
+            : { userId: userObjectId, notificationStatus: 'pending' };
 
         // Buscar movimientos pendientes
         // Si no tienen channels definido o incluyen 'browser'
@@ -540,26 +542,48 @@ async function sendJudicialMovementBrowserAlerts({
         // Procesar alertas
         const processedMovements = [];
         const websocketService = require('./websocket');
+        // Carpeta del usuario para la causa (el click de la alerta navega a
+        // /apps/folders/details/:folderId). Una consulta por expediente.
+        const folderByCausa = new Map();
+        const resolveFolderId = async (causaId) => {
+            if (!models.Folder || !causaId) return null;
+            if (folderByCausa.has(causaId)) return folderByCausa.get(causaId);
+            let folderId = null;
+            try {
+                const folders = await models.Folder.find({ userId: userObjectId, causaId }, { _id: 1, archived: 1 }).lean();
+                const preferred = folders.find(f => f.archived !== true) || folders[0];
+                folderId = preferred ? preferred._id : null;
+            } catch (e) {
+                logger.warn(`No se pudo resolver la carpeta de la causa ${causaId}: ${e.message}`);
+            }
+            folderByCausa.set(causaId, folderId);
+            return folderId;
+        };
 
         for (const movement of upcomingMovements) {
             try {
-                // Formatear fecha del movimiento
                 const formattedDate = moment.utc(movement.movimiento.fecha).format('DD/MM/YYYY');
-                
-                // Crear datos de la alerta
+                const folderId = await resolveFolderId(movement.expediente && movement.expediente.id);
+
+                // sourceType 'movement' + avatarIcon 'TableDocument': únicos valores del
+                // enum de Alert (la-notification / hub / la-subscriptions) que el front
+                // renderiza como movimiento y navega a la carpeta (Notification.tsx).
+                // primaryText explícito: si falta, el front lo deriva de expirationDate
+                // como vencimiento ("Movimiento vencido hace N días").
                 const alertData = {
-                    avatarIcon: 'Gavel',
+                    avatarIcon: 'TableDocument',
                     avatarType: 'icon',
                     avatarSize: 40,
-                    secondaryText: `${movement.expediente.caratula} - Movimiento: ${movement.movimiento.tipo}`,
+                    primaryText: `Nuevo movimiento: ${movement.movimiento.tipo}`,
+                    secondaryText: `${movement.expediente.caratula} · ${formattedDate}`,
                     expirationDate: movement.movimiento.fecha,
                     actionText: 'Ver movimiento'
                 };
 
-                // Crear alerta
                 const newAlert = await models.Alert.create({
                     userId: userId,
-                    sourceType: 'judicial_movement',
+                    folderId: folderId || undefined,
+                    sourceType: 'movement',
                     sourceId: movement._id,
                     ...alertData
                 });
