@@ -4,6 +4,7 @@ const logger = require('../config/logger');
 const { JudicialMovement, User, Folder } = require('../models');
 const authMiddleware = require('../middleware/auth');
 const moment = require('moment');
+const policyService = require('../services/notificationPolicyService');
 
 /**
  * Webhook para recibir movimientos judiciales del día
@@ -29,6 +30,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       skipped: 0,
       skippedDeactivated: 0,
       skippedReserved: 0,
+      skippedSinCarpeta: 0,
       duplicates: 0,
       errors: []
     };
@@ -73,6 +75,26 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       logger.warn(`Webhook daily-movements: no se pudo resolver carpetas sin cobertura: ${lookupError.message}`);
     }
 
+    // Usuario sin carpeta de la causa (2026-09-29): con limits.requireFolderForDelivery
+    // el envío ya los descarta ('el usuario no tiene esta causa en su cuenta'); acá no se
+    // crea el pending. Cubre también la brecha del filtro de reservadas, que mira la
+    // carpeta: sin carpeta no hay causaCredentialCovered que evaluar. Best-effort.
+    let paresConCarpeta = null;
+    try {
+      const cfg = await policyService.getConfigCached();
+      if (cfg?.limits?.requireFolderForDelivery === true) {
+        const causaIds = [...new Set(movements.map((mv) => mv && mv.expediente && mv.expediente.id).filter(Boolean).map(String))];
+        const conCarpeta = await Folder.find(
+          { userId: { $in: batchUserIds }, causaId: { $in: causaIds } },
+          { userId: 1, causaId: 1 }
+        ).lean();
+        paresConCarpeta = new Set(conCarpeta.map((f) => `${f.userId}|${f.causaId}`));
+      }
+    } catch (lookupError) {
+      logger.warn(`Webhook daily-movements: no se pudo resolver carpetas del batch: ${lookupError.message}`);
+      paresConCarpeta = null;
+    }
+
     // Hora de notificación: usar la recibida o por defecto 9:00 AM
     const defaultNotifyTime = moment().hour(9).minute(0).second(0);
     let notifyAt = notificationTime ? moment(notificationTime).toDate() : defaultNotifyTime.toDate();
@@ -109,6 +131,10 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         // Solo fuente PJN (default): las cédulas y otras fuentes no pasan por cobertura.
         if ((movement.source || 'pjn') === 'pjn' && reservedPairs.has(`${userId}|${expediente.id}`)) {
           results.skippedReserved++;
+          continue;
+        }
+        if (paresConCarpeta && !paresConCarpeta.has(`${userId}|${expediente.id}`)) {
+          results.skippedSinCarpeta++;
           continue;
         }
         if (!movimiento || !movimiento.fecha) {
