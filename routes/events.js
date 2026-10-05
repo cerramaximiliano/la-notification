@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const router = express.Router();
 const logger = require('../config/logger');
@@ -6,26 +7,33 @@ const logger = require('../config/logger');
  * Eventos del ecosistema que derivan en un aviso al usuario.
  *
  * Hoy: apps MCP conectadas (OAuth 2.1 vía Hydra). El hub llama a este endpoint
- * fire-and-forget al aceptar un consent; hasta ahora no existía y las llamadas
- * morían en un 404 silencioso.
+ * fire-and-forget al aceptar un consent.
  *
  * Auth: header `X-Internal-Api-Key` (contrato del hub, distinto del Bearer
- * INTERNAL_SERVICE_TOKEN que usan los workers). Si la key no está configurada
- * de este lado, se acepta la llamada pero se deja constancia en el log — MCP
- * está en desarrollo y no queremos que el aviso se pierda por un secret que
- * todavía no se propagó.
+ * INTERNAL_SERVICE_TOKEN que usan los workers), comparado en tiempo constante.
+ * Falla CERRADO: si LA_NOTIFICATION_INTERNAL_API_KEY no está configurada de este
+ * lado, se rechaza todo con 503 (PLAN-LANZAMIENTO MCP §3 A4). Antes se aceptaba
+ * sin validar — cualquiera podía disparar emails de seguridad a usuarios.
  */
+function safeCompare(provided, expected) {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  // timingSafeEqual exige mismo largo; el largo de la key no es secreto.
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 function verifyInternalApiKey(req, res, next) {
   const expected = process.env.LA_NOTIFICATION_INTERNAL_API_KEY;
 
   if (!expected) {
-    logger.warn('[Events] LA_NOTIFICATION_INTERNAL_API_KEY no configurada — se acepta la llamada sin validar');
-    return next();
+    logger.error('[Events] LA_NOTIFICATION_INTERNAL_API_KEY no configurada — endpoint interno rechaza todas las llamadas');
+    return res.status(503).json({ success: false, message: 'Servicio no configurado' });
   }
 
-  const provided = req.header('X-Internal-Api-Key');
-  if (!provided || provided !== expected) {
-    logger.warn('[Events] Llamada rechazada: X-Internal-Api-Key inválida o ausente');
+  if (!safeCompare(req.header('X-Internal-Api-Key'), expected)) {
+    logger.warn(`[Events] Llamada rechazada: X-Internal-Api-Key inválida o ausente (ip=${req.ip}, path=${req.path})`);
     return res.status(401).json({ success: false, message: 'No autorizado' });
   }
 
