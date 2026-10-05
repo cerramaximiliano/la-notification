@@ -96,6 +96,26 @@ const JudicialNotificationConfigSchema = new mongoose.Schema({
         enforcePerUserLimits: {
             type: Boolean,
             default: false
+        },
+        // Una sola notificación por causa y por día (día calendario en la
+        // timezone de notificationSchedule). Si la causa ya salió hoy, los
+        // movimientos que lleguen después quedan PENDING y viajan en el
+        // digest del día siguiente — no se descartan.
+        //
+        // Existe porque los workers detectan movimientos de una misma causa en
+        // varias corridas del día y el cron de entrega corre cada 30 min: sin
+        // esto, el usuario recibía dos avisos de la misma carátula con media
+        // hora de diferencia (pasó el 2026-10-05). Es independiente de
+        // enforcePerUserLimits a propósito: aquello es un tope de volumen, esto
+        // es higiene de la bandeja, y no quiero que uno obligue a prender el otro.
+        //
+        // Nota: no es lo mismo que minHoursBetweenSameExpediente (ventana móvil
+        // de 24 h). Con el digest diario de las 19:00, una ventana de 24 h deja
+        // a una causa que se mueve todos los días rozando el límite y puede
+        // postergarla indefinidamente; el día calendario no tiene esa deriva.
+        oneNotificationPerExpedientePerDay: {
+            type: Boolean,
+            default: true
         }
     },
 

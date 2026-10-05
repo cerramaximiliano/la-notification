@@ -1378,10 +1378,53 @@ async function sendJudicialMovementNotifications({
                 kept.push(movement);
             }
 
-            // Límites por usuario — opt-in vía limits.enforcePerUserLimits
-            // (default false para no cambiar comportamiento existente).
             let deliverable = kept;
             const limits = (notifConfig && notifConfig.limits) || {};
+
+            // Una notificación por causa y por día.
+            //
+            // Los workers detectan movimientos de una misma causa en varias
+            // corridas del día y este cron entrega cada 30 min: sin este corte,
+            // la misma carátula salía dos veces con media hora de diferencia.
+            // Lo que se posterga NO se pierde — queda pending y viaja en el
+            // digest de mañana.
+            //
+            // Va antes del bloque de enforcePerUserLimits y fuera de él: filtra
+            // `deliverable`, que es la lista única que después consumen el email
+            // y el digest de WhatsApp, así que arregla los dos canales de una.
+            if (limits.oneNotificationPerExpedientePerDay !== false && deliverable.length > 0) {
+                const tz = notifConfig?.notificationSchedule?.timezone || 'America/Argentina/Buenos_Aires';
+                const inicioDelDia = momentTz.tz(tz).startOf('day').toDate();
+                const expIds = [...new Set(deliverable.map(m => m.expediente?.id).filter(Boolean))];
+
+                // Una sola consulta para todas las causas del batch.
+                const yaAvisadasHoy = new Set(
+                    await JudicialMovement.distinct('expediente.id', {
+                        userId,
+                        'expediente.id': { $in: expIds },
+                        notifications: {
+                            $elemMatch: {
+                                date: { $gte: inicioDelDia },
+                                type: { $in: ['email', 'whatsapp'] },
+                                success: true
+                            }
+                        }
+                    })
+                );
+
+                if (yaAvisadasHoy.size > 0) {
+                    const antes = deliverable.length;
+                    deliverable = deliverable.filter(m => !yaAvisadasHoy.has(m.expediente?.id));
+                    deferredCount += antes - deliverable.length;
+                    logger.info(
+                        `Una notificación por causa y día: ${antes - deliverable.length} movimientos diferidos a mañana ` +
+                        `(${yaAvisadasHoy.size} causa(s) ya avisadas hoy)`
+                    );
+                }
+            }
+
+            // Límites por usuario — opt-in vía limits.enforcePerUserLimits
+            // (default false para no cambiar comportamiento existente).
             if (limits.enforcePerUserLimits === true && deliverable.length > 0) {
                 const timezone = notifConfig?.notificationSchedule?.timezone || 'America/Argentina/Buenos_Aires';
                 const maxPerDay = limits.maxNotificationsPerUserPerDay || 50;
