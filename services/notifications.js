@@ -2420,6 +2420,27 @@ async function sendPostalAdminAlert(alert) {
  *
  * @returns {Object} { success, sent, message }
  */
+const AI_APP_LOGO_BASE = 'https://lawanalytics.app/images/integrations';
+
+/**
+ * Bloque HTML (tabla, apto email) con el logo del asistente conectado.
+ * Proveedor por nombre del client: Claude/Anthropic o ChatGPT/OpenAI; si no
+ * se reconoce, no se muestra logo.
+ */
+function buildAiAppLogoHtml(rawName, escapedName) {
+    const name = String(rawName || '').toLowerCase();
+    let logo = null;
+    if (/claude|anthropic/.test(name)) logo = `${AI_APP_LOGO_BASE}/claude-ai-logo-96.png`;
+    else if (/chatgpt|openai/.test(name)) logo = `${AI_APP_LOGO_BASE}/chatgpt-logo-96.png`;
+    if (!logo) return '';
+    return `
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;">
+              <tr><td align="center" style="padding:4px 0;">
+                <img src="${logo}" width="48" height="48" alt="${escapedName}" style="display:block;width:48px;height:48px;border:0;outline:none;" />
+              </td></tr>
+            </table>`;
+}
+
 async function sendMcpAppConnectedNotification({ userId, userEmail, clientName, clientId, connectedAt, ip, userAgent, revokeUrl }) {
     const { esc } = require('./htmlEscape');
     try {
@@ -2450,7 +2471,12 @@ async function sendMcpAppConnectedNotification({ userId, userEmail, clientName, 
             userAgent ? ['Dispositivo', esc(String(userAgent).slice(0, 120))] : null
         ].filter(Boolean);
 
-        const detallesHtml = detalles.map(([label, value]) => `
+        // Logo de marca del asistente (mismos assets que la landing, en PNG porque
+        // los clientes de correo no renderizan SVG). Va al inicio de detallesHtml
+        // para que aparezca tanto con el template de la DB como con el fallback.
+        const appLogoHtml = buildAiAppLogoHtml(clientName || clientId, app);
+
+        const detallesHtml = appLogoHtml + detalles.map(([label, value]) => `
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;margin-bottom:8px;">
               <tr><td style="padding:10px 14px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
