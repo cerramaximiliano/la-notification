@@ -21,3 +21,6 @@ Thumbs.db
 # Otros
 .npm
 .eslintcache
+# Secretos locales (no trackear)
+.env.local
+meta-secrets.env
