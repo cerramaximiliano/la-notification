@@ -53,7 +53,7 @@ function verifyInternalApiKey(req, res, next) {
   return next();
 }
 
-const DEFAULT_REVOKE_URL = 'https://lawanalytics.app/settings/connected-apps';
+const DEFAULT_REVOKE_URL = 'https://lawanalytics.app/apps/profiles/account/pjn?view=ia';
 
 function isTrustedRevokeUrl(value) {
   if (typeof value !== 'string') return false;

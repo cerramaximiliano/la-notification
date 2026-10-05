@@ -50,7 +50,7 @@ body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helve
       <tr><td class="px-card" style="padding:36px 44px 8px 44px;">
         <h1 class="h1-display" style="margin:0 0 18px 0; font-size:28px; line-height:1.2; letter-spacing:-0.5px; font-weight:600; color:#0F172A;">Conectaste una aplicación a tu cuenta</h1>
         <p style="margin:0 0 6px 0; font-size:16px; line-height:1.6; color:#334155;">Hola ${vars.userName},</p>
-        <p style="margin:0 0 8px 0; font-size:16px; line-height:1.6; color:#334155;">Autorizaste a <b>${vars.appName}</b> a acceder a los datos de tu cuenta de Law||Analytics. Si fuiste vos, no tenés que hacer nada.</p>
+        <p style="margin:0 0 8px 0; font-size:16px; line-height:1.6; color:#334155;">Autorizaste a <b>${vars.appName}</b> a consultar, en modo solo lectura, los datos de tu cuenta de Law||Analytics y de tus equipos. Lo que consulte lo procesa su proveedor según sus propias políticas. Si fuiste vos, no tenés que hacer nada.</p>
       </td></tr>
       <tr><td class="px-card" style="padding:12px 44px 4px 44px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E6EAF2;border-radius:10px;overflow:hidden;">
@@ -68,7 +68,7 @@ body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helve
         </tr></table>
       </td></tr>
       <tr><td class="px-card" style="padding:6px 44px 6px 44px;">
-        <p style="margin:0;font-size:13px;line-height:1.6;color:#64748B;"><b>¿No reconocés esta conexión?</b> Revocá el acceso desde el botón de arriba y cambiá tu contraseña.</p>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#64748B;"><b>¿No reconocés esta conexión?</b> Revocá el acceso desde el botón de arriba (corta el acceso en el momento) y cambiá tu contraseña.</p>
       </td></tr>
       <tr><td class="px-card" style="padding:14px 44px 32px 44px;">
         <p style="margin:0;font-size:13px;line-height:1.6;color:#64748B;">Saludos,<br/>El equipo de Law||Analytics</p>
@@ -87,12 +87,12 @@ body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helve
 
   const text = `Hola ${vars.userName},
 
-Autorizaste a ${vars.appName} a acceder a los datos de tu cuenta de Law||Analytics.
+Autorizaste a ${vars.appName} a consultar, en modo solo lectura, los datos de tu cuenta de Law||Analytics y de tus equipos. Lo que consulte lo procesa su proveedor según sus propias políticas.
 Si fuiste vos, no tenés que hacer nada.
 
 ${vars.detallesText}
 
-¿No reconocés esta conexión? Revocá el acceso y cambiá tu contraseña:
+¿No reconocés esta conexión? Revocá el acceso (corta en el momento) y cambiá tu contraseña:
 ${vars.ctaUrl}
 
 Saludos,

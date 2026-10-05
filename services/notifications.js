@@ -2461,7 +2461,7 @@ async function sendMcpAppConnectedNotification({ userId, userEmail, clientName, 
         const fecha = connectedAt
             ? moment(connectedAt).tz ? moment(connectedAt).tz('America/Argentina/Buenos_Aires').format('DD/MM/YYYY HH:mm') : moment(connectedAt).format('DD/MM/YYYY HH:mm')
             : moment().format('DD/MM/YYYY HH:mm');
-        const gestionUrl = revokeUrl || `${frontBase}/settings/connected-apps`;
+        const gestionUrl = revokeUrl || `${frontBase}/apps/profiles/account/pjn?view=ia`;
 
         // Detalle de la conexión (solo lo que aporta al usuario para reconocerla)
         const detalles = [
