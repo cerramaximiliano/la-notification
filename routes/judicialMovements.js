@@ -99,12 +99,22 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     const defaultNotifyTime = moment().hour(9).minute(0).second(0);
     let notifyAt = notificationTime ? moment(notificationTime).toDate() : defaultNotifyTime.toDate();
 
-    // Si el notifyAt está en el pasado, usar el momento actual
-    // para que se notifique en la próxima ejecución del cron
+    // Si el notifyAt que mandó la fuente ya venció, lo recalculamos contra el
+    // horario configurado en vez de poner "ahora".
+    //
+    // Antes esto era `notifyAt = now`, y por eso un movimiento detectado de
+    // madrugada se notificaba de madrugada: los workers corren todo el día y la
+    // hora del payload casi siempre llega vencida (pjn-mis-causas manda un fijo
+    // de las 13:00 ART que para cualquier envío posterior ya pasó). Ahora, antes
+    // del slot del día se espera al slot; después del slot se entrega igual en
+    // la próxima corrida (mismo día, hora razonable); y en día no activo se
+    // espera al próximo día activo.
     const now = new Date();
     if (notifyAt < now) {
-      logger.info(`⏰ Hora de notificación ${notifyAt.toISOString()} ya pasó, usando hora actual ${now.toISOString()}`);
-      notifyAt = now;
+      const config = await policyService.getConfigCached();
+      const recalculado = policyService.getDeliveryNotifyAt(config, now);
+      logger.info(`⏰ Hora de notificación ${notifyAt.toISOString()} ya pasó, reprogramando a ${recalculado.toISOString()}`);
+      notifyAt = recalculado;
     }
 
     for (const movement of movements) {

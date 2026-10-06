@@ -171,6 +171,59 @@ function getScheduledNotifyAt(config, fallbackHour = 19) {
 }
 
 /**
+ * El slot del día `date` (HH:MM de notificationSchedule en la timezone de la config).
+ */
+function slotDelDia(config, date, fallbackHour = 19) {
+  const schedule = (config && config.notificationSchedule) || {};
+  const timezone = schedule.timezone || DEFAULT_TIMEZONE;
+  const hour = Number.isInteger(schedule.dailyNotificationHour) ? schedule.dailyNotificationHour : fallbackHour;
+  const minute = Number.isInteger(schedule.dailyNotificationMinute) ? schedule.dailyNotificationMinute : 0;
+  return moment.tz(date, timezone).hour(hour).minute(minute).second(0).millisecond(0);
+}
+
+/**
+ * Próximo slot de entrega ESTRICTAMENTE posterior a `desde`, saltando los días
+ * no activos (activeDays). Lo usa el diferido: si una causa ya se notificó hoy,
+ * lo que llegue después tiene que esperar al slot de mañana, no dispararse a las
+ * 00:30 — que es lo que pasaba cuando el notifyAt quedaba vencido y el cron,
+ * apenas cambiaba el día calendario, lo entregaba en la primera corrida.
+ */
+function getNextScheduledNotifyAt(config, desde = new Date(), fallbackHour = 19) {
+  const timezone = (config && config.notificationSchedule && config.notificationSchedule.timezone) || DEFAULT_TIMEZONE;
+  let cursor = slotDelDia(config, desde, fallbackHour);
+  if (!cursor.isAfter(moment.tz(desde, timezone))) {
+    cursor = cursor.add(1, 'day');
+  }
+  // Como mucho una vuelta de semana; si activeDays quedara vacío o inválido,
+  // isActiveDay cae en los defaults y el primer intento ya sirve.
+  for (let i = 0; i < 7; i++) {
+    if (isActiveDay(config, null, cursor.toDate())) return cursor.toDate();
+    cursor = cursor.add(1, 'day');
+  }
+  return cursor.toDate();
+}
+
+/**
+ * Hora de entrega para un movimiento que entra AHORA por el webhook.
+ *
+ * La regla es "el digest sale a la hora programada y sigue entregando hasta el
+ * final de ese día": lo que llega antes del slot espera al slot de hoy, lo que
+ * llega después sale en la próxima corrida del cron (mismo día, hora razonable),
+ * y lo que llega en un día no activo espera al próximo día activo.
+ *
+ * Reemplaza al viejo `notifyAt = now` del webhook, que entregaba de inmediato a
+ * cualquier hora: un movimiento detectado a las 02:00 se notificaba a las 02:00.
+ */
+function getDeliveryNotifyAt(config, desde = new Date(), fallbackHour = 19) {
+  const timezone = (config && config.notificationSchedule && config.notificationSchedule.timezone) || DEFAULT_TIMEZONE;
+  if (!isActiveDay(config, null, desde)) {
+    return getNextScheduledNotifyAt(config, desde, fallbackHour);
+  }
+  const slotHoy = slotDelDia(config, desde, fallbackHour);
+  return moment.tz(desde, timezone).isBefore(slotHoy) ? slotHoy.toDate() : new Date(desde);
+}
+
+/**
  * Horas de reporte admin (formato 'H:mm'). Prioridad:
  * config.notificationSchedule.reportHours → env JUDICIAL_MOVEMENT_REPORT_HOURS → default.
  */
@@ -191,6 +244,8 @@ module.exports = {
   isActiveDay,
   passesContentFilters,
   getScheduledNotifyAt,
+  getNextScheduledNotifyAt,
+  getDeliveryNotifyAt,
   getReportHours,
   BASE_POLICY
 };

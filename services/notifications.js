@@ -1413,12 +1413,28 @@ async function sendJudicialMovementNotifications({
                 );
 
                 if (yaAvisadasHoy.size > 0) {
-                    const antes = deliverable.length;
+                    const diferidos = deliverable.filter(m => yaAvisadasHoy.has(m.expediente?.id));
                     deliverable = deliverable.filter(m => !yaAvisadasHoy.has(m.expediente?.id));
-                    deferredCount += antes - deliverable.length;
+                    deferredCount += diferidos.length;
+
+                    // Correrles el notifyAt al próximo slot. Sin esto el diferido
+                    // dura hasta medianoche y nada más: al cambiar el día
+                    // calendario este filtro deja de aplicar, el notifyAt sigue
+                    // vencido y la primera corrida del cron los entrega a las
+                    // 00:30. Pasó el 2026-10-06 con GALENO.
+                    const proximoSlot = policyService.getNextScheduledNotifyAt(notifConfig);
+                    try {
+                        await JudicialMovement.updateMany(
+                            { _id: { $in: diferidos.map(m => m._id) } },
+                            { $set: { 'notificationSettings.notifyAt': proximoSlot } }
+                        );
+                    } catch (reprogErr) {
+                        logger.error(`No se pudo reprogramar el notifyAt de los diferidos: ${reprogErr.message}`);
+                    }
+
                     logger.info(
-                        `Una notificación por causa y día: ${antes - deliverable.length} movimientos diferidos a mañana ` +
-                        `(${yaAvisadasHoy.size} causa(s) ya avisadas hoy)`
+                        `Una notificación por causa y día: ${diferidos.length} movimientos diferidos a ` +
+                        `${proximoSlot.toISOString()} (${yaAvisadasHoy.size} causa(s) ya avisadas hoy)`
                     );
                 }
             }
