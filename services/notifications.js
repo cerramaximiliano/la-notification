@@ -1228,6 +1228,40 @@ async function sendJudicialMovementNotifications({
         const emailEnabled = notifications.channels && notifications.channels.email !== false;
 
         if (!emailEnabled) {
+            // Cerrar los pendientes en vez de dejarlos dando vueltas.
+            //
+            // Este return salía sin tocar nada, así que los movimientos de un
+            // usuario con el email apagado quedaban 'pending' para siempre: el
+            // cron los releía cada media hora indefinidamente y, si el usuario
+            // volvía a prender el canal, le llegaba un solo correo con meses de
+            // movimientos acumulados. Un caso real tenía 112 desde agosto.
+            //
+            // 'skipped' es terminal y con motivo, igual que la rama de
+            // judicialMovements.enabled === false más abajo. El movimiento no se
+            // pierde: sigue visible en la carpeta, lo que se cierra es el
+            // intento de notificarlo.
+            try {
+                const huerfanos = await JudicialMovement.updateMany(
+                    { userId, notificationStatus: 'pending' },
+                    {
+                        $set: { notificationStatus: 'skipped' },
+                        $push: {
+                            notifications: {
+                                date: new Date(),
+                                type: 'system',
+                                success: false,
+                                details: 'Canal de email desactivado por preferencia del usuario'
+                            }
+                        }
+                    }
+                );
+                if (huerfanos.modifiedCount > 0) {
+                    logger.info(`Usuario ${user.email} tiene el email apagado — ${huerfanos.modifiedCount} movimientos pendientes marcados skipped`);
+                }
+            } catch (skipErr) {
+                logger.error(`Error cerrando pendientes de usuario con email apagado: ${skipErr.message}`);
+            }
+
             return {
                 success: true,
                 statusCode: 200,
