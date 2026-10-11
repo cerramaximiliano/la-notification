@@ -167,10 +167,46 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
                   <td style="font-size:13px;font-weight:600;color:#0F172A;">{{tipo}}</td>
                   <td align="right" style="font-size:12px;color:#64748B;white-space:nowrap;">{{fecha}}</td>
                 </tr></table>
-                <p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">{{detalle}}</p>{{urlHtml}}
+                <p style="margin:6px 0 0 0;font-size:13px;line-height:1.55;color:#475569;">{{detalle}}</p>{{plazoHtml}}{{urlHtml}}
               </td></tr>
             </table>
           </td></tr>`;
+
+  // Plazo de vencimiento de una cédula (plazos automáticos, services/plazosEnCorreo.js).
+  // Fechas 'YYYY-MM-DD' → DD/MM/YYYY sin pasar por zona horaria.
+  const plazosPorMovimiento = options.plazosPorMovimiento || new Map();
+  const fechaAr = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('/') : '');
+  const plazoDeMovimiento = (movement) => {
+    const p = plazosPorMovimiento.get(String(movement._id));
+    if (!p) return { html: '', text: '' };
+    const dias = p.plazoDias ? `${p.plazoDias} días ${p.tipoPlazo === 'corridos' ? 'corridos' : 'hábiles'}` : 'plazo';
+    const fundamento = p.fuente === 'texto'
+      ? 'indicado en la cédula'
+      : [p.norma?.label, p.norma?.cita].filter(Boolean).join(' — ');
+    const gracia = p.vencimientoConGracia ? ` (cargo: dos primeras horas del ${fechaAr(p.vencimientoConGracia)})` : '';
+    let titulo;
+    let nota;
+    if (p.accion === 'aviso_otra_parte') {
+      titulo = `Cédula a la otra parte: vence el ${fechaAr(p.vencimiento)}`;
+      nota = 'No está dirigida a vos; te lo mostramos para que sigas el plazo de la contraparte.';
+    } else if (p.accion === 'sugerencia_sin_confirmar') {
+      titulo = `Vencimiento sugerido: ${fechaAr(p.vencimiento)}`;
+      nota = 'No pudimos confirmar el destinatario. Cargá tu CUIT en tu perfil para que lo confirmemos solos.';
+    } else {
+      titulo = `Vence el ${fechaAr(p.vencimiento)}`;
+      nota = 'Lo agregamos a tu calendario.';
+    }
+    const html = `
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 0 0;background-color:#FFF7E6;border:1px solid #F5D9A6;border-radius:6px;">
+                  <tr><td style="padding:10px 12px;">
+                    <p style="margin:0;font-size:13px;font-weight:700;color:#1F2937;">${esc(titulo)}</p>
+                    <p style="margin:4px 0 0 0;font-size:12px;line-height:1.5;color:#374151;">${esc(dias)}${fundamento ? ` · ${esc(fundamento)}` : ''}${esc(gracia)}</p>
+                    <p style="margin:4px 0 0 0;font-size:12px;line-height:1.5;color:#374151;">Sugerencia automática: verificá el cómputo. ${esc(nota)}</p>
+                  </td></tr>
+                </table>`;
+    const text = `  ${titulo} — ${dias}${fundamento ? ` (${fundamento})` : ''}${gracia}. Sugerencia automática: verificá el cómputo.\n`;
+    return { html, text };
+  };
 
   // Footer de segmento: CTA a la causa, sobre la misma superficie gris.
   const folderCtaTemplate = `
@@ -234,15 +270,18 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
         ? `<p style="margin:10px 0 0 0;"><a href="${docUrl}" style="display:inline-block;padding:8px 16px;font-size:12px;font-weight:600;color:#FFFFFF;background-color:#3A7BFF;border-radius:6px;text-decoration:none;">${docLabel}&nbsp;&#8594;</a></p>`
         : '';
       
+      const plazo = plazoDeMovimiento(movement);
       movimientosRows += processTemplate(movimientoRowTemplate, {
         fecha,
         tipo: esc(movement.movimiento.tipo),
         detalle: esc(movement.movimiento.detalle),
+        plazoHtml: plazo.html,
         urlHtml
       });
       
       // Text version
       movimientosText += `- ${fecha}: ${movement.movimiento.tipo} - ${movement.movimiento.detalle}\n`;
+      movimientosText += plazo.text;
       if (docUrl) {
         movimientosText += `  Ver documento: ${docUrl}\n`;
       }

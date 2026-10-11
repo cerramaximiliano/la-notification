@@ -23,6 +23,7 @@ function isWhatsappEligible(user) {
         && !optIn.revokedAt;
 }
 const { getProcessedTemplate, processJudicialMovementsData, processJudicialCedulasData, sectionHeaderHtml } = require("./templateProcessor");
+const { plazosParaMovimientos } = require("./plazosEnCorreo");
 
 /**
  * Genera el wrapper HTML base para todos los emails
@@ -1628,6 +1629,10 @@ async function sendJudicialMovementNotifications({
         // Título de la banda de sección (contenedor v3): "Movimientos" cuando el
         // email también trae cédulas, "Movimientos nuevos" cuando viene solo.
         movementLinkOptions.sectionTitle = Object.keys(cedulasByExpediente).length > 0 ? 'Movimientos' : 'Movimientos nuevos';
+
+        // Plazo de vencimiento de las cédulas que plazos automáticos ya entregó a
+        // este usuario (services/plazosEnCorreo.js). Sin plazo, se notifica igual.
+        movementLinkOptions.plazosPorMovimiento = await plazosParaMovimientos(pendingMovements, userId);
 
         // Variables de movimientos (slot {{expedientesHtml}}) + cédulas (slot {{cedulasHtml}}).
         const movementVars = processJudicialMovementsData(movementsByExpediente, user, movementLinkOptions);
