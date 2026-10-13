@@ -22,6 +22,18 @@ const INVALID_TOKEN_CODES = ['registration-token-not-registered', 'invalid-regis
 let messaging = null;
 let initialized = false;
 
+// FIREBASE_SERVICE_ACCOUNT acepta: JSON inline, base64 del JSON (recomendado en
+// Secrets Manager: una sola línea, sin escapes que rompan el .env que genera
+// config/env.js) o ruta a un archivo.
+function parseServiceAccount(raw) {
+  const value = raw.trim();
+  if (value.startsWith('{')) return JSON.parse(value);
+  if (fs.existsSync(value)) return JSON.parse(fs.readFileSync(value, 'utf-8'));
+  const decoded = Buffer.from(value, 'base64').toString('utf-8').trim();
+  if (decoded.startsWith('{')) return JSON.parse(decoded);
+  throw new Error('FIREBASE_SERVICE_ACCOUNT no es JSON, base64 de JSON ni una ruta existente');
+}
+
 function init() {
   if (initialized) return messaging;
   initialized = true;
@@ -34,7 +46,7 @@ function init() {
   try {
     const { initializeApp, cert, getApps } = require('firebase-admin/app');
     const { getMessaging } = require('firebase-admin/messaging');
-    const serviceAccount = raw.trim().startsWith('{') ? JSON.parse(raw) : JSON.parse(fs.readFileSync(raw, 'utf-8'));
+    const serviceAccount = parseServiceAccount(raw);
     const app = getApps()[0] || initializeApp({ credential: cert(serviceAccount) });
     messaging = getMessaging(app);
     logger.info('Push: Firebase inicializado');
