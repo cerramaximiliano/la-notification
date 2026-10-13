@@ -1,6 +1,7 @@
 const { Alert, User, NotificationLog } = require('../models');
 const logger = require('../config/logger');
 const websocketService = require('../services/websocket');
+const pushChannel = require('../services/channels/push');
 const mongoose = require('mongoose');
 
 /**
@@ -180,6 +181,9 @@ const createCustomAlert = async (req, res) => {
 
         // Intentar entregar inmediatamente si está configurado
         if (deliverImmediately) {
+          // Push a la app mobile (FCM), best-effort, aunque no tenga socket abierto.
+          pushChannel.pushAlert(user._id.toString(), newAlert);
+
           const isConnected = websocketService.isUserConnected(user._id.toString());
           logger.info(`Usuario ${user.email} conectado por WebSocket: ${isConnected}`);
           

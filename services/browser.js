@@ -381,6 +381,10 @@ async function sendBrowserAlerts({
                     logger.error(`Error al enviar alerta push para ${type}: ${wsError.message}`);
                 }
 
+                // Push a la app mobile (FCM). Best-effort y en paralelo al socket: llega
+                // aunque el usuario no tenga la web abierta. No-op sin Firebase configurado.
+                pushChannel.pushAlert(userId, newAlert);
+
                 processedItems.push(item);
                 
             } catch (error) {
@@ -599,6 +603,9 @@ async function sendJudicialMovementBrowserAlerts({
                 } catch (wsError) {
                     logger.error(`Error al enviar alerta push para movimiento judicial: ${wsError.message}`);
                 }
+
+                // Push a la app mobile (FCM), best-effort.
+                pushChannel.pushAlert(userId, newAlert);
 
                 processedMovements.push(movement);
 
