@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const moment = require('moment');
+const momentTz = require('moment-timezone');
 const pushChannel = require('./channels/push');
 
 // Funciones auxiliares reutilizables
@@ -456,6 +457,9 @@ async function sendJudicialMovementBrowserAlerts({
     // IDs ya notificados por email en esta corrida: el caller los marca 'sent'
     // ANTES de llamar acá, así que la consulta por status 'pending' no los ve.
     movementIds = null,
+    // Zona horaria del "día" para el tope de una alerta por causa y por día
+    // (la de notificationSchedule, la misma que usa el filtro del email).
+    timezone = 'America/Argentina/Buenos_Aires',
     models,
     utilities: { logger, mongoose, moment }
 }) {
@@ -497,10 +501,6 @@ async function sendJudicialMovementBrowserAlerts({
         const userSettings = helpers.getUserNotificationSettings(user, 'movement');
         const globalDaysInAdvance = requestedDaysInAdvance || userSettings.daysInAdvance || 5;
 
-        // Fechas para el rango de búsqueda
-        const today = moment.utc().startOf('day').toDate();
-        const todayDateString = moment.utc().format('YYYY-MM-DD');
-
         // Buscar movimientos judiciales pendientes de notificar
         // Los movimientos judiciales se notifican cuando ya ocurrieron (fecha pasada o actual)
         const baseQuery = Array.isArray(movementIds) && movementIds.length > 0
@@ -520,17 +520,49 @@ async function sendJudicialMovementBrowserAlerts({
 
         logger.info(`Movimientos judiciales encontrados: ${judicialMovements.length} para usuario ${userId}`);
 
-        // Filtrar según configuración específica
-        const upcomingMovements = judicialMovements.filter(movement => {
-            // Verificar si ya se notificó hoy por browser
-            const alreadyNotifiedToday = movement.notifications && 
-                movement.notifications.some(n => {
-                    const notificationDate = n.date ? new Date(n.date).toISOString().split('T')[0] : '';
-                    return n.type === 'browser' && notificationDate === todayDateString;
-                });
+        // Una alerta por causa y por día, aunque los movimientos lleguen en tandas
+        // distintas (el cron entrega cada 30 min). Si la causa ya tuvo aviso de
+        // navegador hoy, el de la mañana ya lleva a la carpeta con todos sus
+        // movimientos: los de la tarde no generan otro.
+        //
+        // Se corta por día calendario de Argentina, no de UTC: la tanda de las
+        // 21:00 ART ya es el día siguiente en UTC y con UTC se colaba un segundo
+        // aviso de la misma causa.
+        const inicioDelDia = momentTz.tz(timezone).startOf('day').toDate();
+        const avisadoHoy = (m) => Array.isArray(m.notifications) && m.notifications.some(
+            n => n.type === 'browser' && n.date && new Date(n.date) >= inicioDelDia
+        );
 
-            return !alreadyNotifiedToday;
+        const causaIds = [...new Set(judicialMovements.map(m => m.expediente && m.expediente.id).filter(Boolean))];
+        let causasAvisadasHoy = new Set();
+        if (causaIds.length > 0) {
+            try {
+                causasAvisadasHoy = new Set(
+                    await models.JudicialMovement.distinct('expediente.id', {
+                        userId: userObjectId,
+                        'expediente.id': { $in: causaIds },
+                        notifications: { $elemMatch: { type: 'browser', date: { $gte: inicioDelDia } } }
+                    })
+                );
+            } catch (e) {
+                // Sin el chequeo se arriesga un aviso repetido; sin aviso se pierde
+                // uno. Preferimos lo primero.
+                logger.warn(`No se pudo verificar causas ya avisadas hoy: ${e.message}`);
+            }
+        }
+
+        const upcomingMovements = judicialMovements.filter(movement => {
+            if (avisadoHoy(movement)) return false;
+            const causaId = movement.expediente && movement.expediente.id;
+            return !(causaId && causasAvisadasHoy.has(causaId));
         });
+
+        if (upcomingMovements.length < judicialMovements.length) {
+            logger.info(
+                `Una alerta por causa y día: ${judicialMovements.length - upcomingMovements.length} movimiento(s) ` +
+                `sin aviso nuevo (${causasAvisadasHoy.size} causa(s) ya avisadas hoy)`
+            );
+        }
 
         logger.info(`Movimientos después de filtrar notificaciones de hoy: ${upcomingMovements.length}`);
 
@@ -565,10 +597,26 @@ async function sendJudicialMovementBrowserAlerts({
             return folderId;
         };
 
+        // Una alerta por causa, no por movimiento. El click lleva a la carpeta
+        // con todos sus movimientos, así que N avisos de la misma carátula solo
+        // llenaban la bandeja (y, con FCM, el teléfono). Sin expediente.id el
+        // movimiento va solo: no hay con qué agruparlo.
+        const groups = new Map();
         for (const movement of upcomingMovements) {
+            const key = (movement.expediente && movement.expediente.id) || `mov:${movement._id}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(movement);
+        }
+
+        let alertsCreated = 0;
+        for (const group of groups.values()) {
+            // upcomingMovements viene ordenado por fecha ascendente: el último es
+            // el más reciente y es el que representa al grupo.
+            const latest = group[group.length - 1];
             try {
-                const formattedDate = moment.utc(movement.movimiento.fecha).format('DD/MM/YYYY');
-                const folderId = await resolveFolderId(movement.expediente && movement.expediente.id);
+                const formattedDate = moment.utc(latest.movimiento.fecha).format('DD/MM/YYYY');
+                const folderId = await resolveFolderId(latest.expediente && latest.expediente.id);
+                const isSingle = group.length === 1;
 
                 // sourceType 'movement' + avatarIcon 'TableDocument': únicos valores del
                 // enum de Alert (la-notification / hub / la-subscriptions) que el front
@@ -579,17 +627,19 @@ async function sendJudicialMovementBrowserAlerts({
                     avatarIcon: 'TableDocument',
                     avatarType: 'icon',
                     avatarSize: 40,
-                    primaryText: `Nuevo movimiento: ${movement.movimiento.tipo}`,
-                    secondaryText: `${movement.expediente.caratula} · ${formattedDate}`,
-                    expirationDate: movement.movimiento.fecha,
-                    actionText: 'Ver movimiento'
+                    // Sin el tipo de movimiento: denominaciones como "DESPACHO" no
+                    // dicen nada y el detalle está en la carpeta.
+                    primaryText: isSingle ? 'Nuevo movimiento' : 'Nuevos movimientos',
+                    secondaryText: `${latest.expediente.caratula} · ${formattedDate}`,
+                    expirationDate: latest.movimiento.fecha,
+                    actionText: 'Ver movimientos'
                 };
 
                 const newAlert = await models.Alert.create({
                     userId: userId,
                     folderId: folderId || undefined,
                     sourceType: 'movement',
-                    sourceId: movement._id,
+                    sourceId: latest._id,
                     ...alertData
                 });
 
@@ -597,7 +647,7 @@ async function sendJudicialMovementBrowserAlerts({
                 try {
                     if (websocketService.isUserConnected(userId)) {
                         await websocketService.sendPushAlert(userId, newAlert);
-                        logger.info(`Alerta push enviada al usuario ${userId} para movimiento judicial ${movement._id}`);
+                        logger.info(`Alerta push enviada al usuario ${userId} para ${group.length} movimiento(s) de la causa ${latest.expediente && latest.expediente.id}`);
                     } else {
                         logger.info(`Usuario ${userId} no conectado, la alerta de movimiento judicial quedará pendiente`);
                     }
@@ -608,20 +658,22 @@ async function sendJudicialMovementBrowserAlerts({
                 // Push a la app mobile (FCM), best-effort.
                 pushChannel.pushAlert(userId, newAlert);
 
-                processedMovements.push(movement);
+                alertsCreated++;
+                processedMovements.push(...group);
 
             } catch (error) {
-                logger.error(`Error procesando alerta para movimiento judicial ${movement._id}:`, error);
+                logger.error(`Error procesando alerta para la causa del movimiento judicial ${latest._id}:`, error);
             }
         }
 
-        logger.info(`Alertas de navegador creadas para ${processedMovements.length} movimientos judiciales`);
+        logger.info(`Alertas de navegador creadas: ${alertsCreated} para ${processedMovements.length} movimientos judiciales`);
 
         return {
             success: true,
             statusCode: 200,
             message: `Se han creado alertas en el navegador para ${processedMovements.length} movimiento(s) judicial(es)`,
             count: processedMovements.length,
+            alertsCount: alertsCreated,
             notified: true,
             userId: userId,
             movementIds: processedMovements.map(m => m._id),

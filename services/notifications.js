@@ -1910,6 +1910,7 @@ async function sendJudicialMovementNotifications({
                 const browserResult = await sendJudicialMovementBrowserAlerts({
                     userId: userId,
                     movementIds: notifiedMovementIds,
+                    timezone: notifConfig?.notificationSchedule?.timezone || 'America/Argentina/Buenos_Aires',
                     models: { User, JudicialMovement, Alert, Folder },
                     utilities: { logger, mongoose: require('mongoose'), moment }
                 });
