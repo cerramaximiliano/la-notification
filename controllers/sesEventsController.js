@@ -10,18 +10,98 @@
  * Modelado sobre la-marketing-service/controllers/snsWebhookController.js,
  * que hace lo mismo para las campañas de marketing.
  *
- * PENDIENTE DE INFRAESTRUCTURA (consola AWS, no se puede hacer por código):
- *   1. Crear un tema SNS (p.ej. `ses-notification-events`).
- *   2. Crear un Configuration Set en SES que publique Delivery/Bounce/
- *      Complaint/DeliveryDelay a ese tema.
- *   3. Pasar ese Configuration Set en el SendEmailCommand de services/email.js
- *      (parámetro ConfigurationSetName).
- *   4. Suscribir este endpoint al tema: POST https://<host>/api/ses-events
- *      La confirmación de suscripción se auto-acepta más abajo.
+ * Infraestructura (hecha, us-east-1): tema SNS `ses-notification-events`,
+ * configuration set `notificaciones-judiciales` (Delivery/Bounce/Complaint/
+ * DeliveryDelay + Open/Click desde 2026-08-21) que `services/email.js` pasa en
+ * cada SendEmailCommand, y suscripción https de este endpoint al tema.
+ *
+ * Además del NotificationLog, desde 2026-10-24 actualiza el registro de
+ * `emaillogs` (auditoría central del ecosistema) que `services/email.js`
+ * escribe por cada envío: hasta entonces los 1.140 correos de 60 días de este
+ * servicio figuraban `sent` para siempre aunque SES ya publicaba sus eventos
+ * acá. Espejo de `law-analytics-server/controllers/sesEventsController.js`
+ * (mismos campos: status con precedencia, deliveredAt/openedAt/bouncedAt/
+ * complainedAt/delayedAt, bounceType, sesEvents[-20]).
  */
 const axios = require("axios");
+const mongoose = require("mongoose");
 const { NotificationLog } = require("../models");
 const logger = require("../config/logger");
+
+// ---------- emaillogs ----------
+// Un rebote o una queja no se pisan con una entrega tardía.
+const EMAILLOG_RANK = { failed: 0, sent: 1, delivered: 2, bounced: 3, complained: 4 };
+const EMAILLOG_MAX_EVENTS = 20;
+
+// Traduce un evento de SES a la actualización del emaillog. Pura.
+const emailLogUpdateFromEvent = (ev) => {
+  const type = ev?.eventType || ev?.notificationType;
+  const messageId = ev?.mail?.messageId;
+  if (!type || !messageId) return null;
+  const set = {};
+  let status = null;
+  let at = null;
+  let detail;
+  switch (type) {
+    case "Delivery":
+      at = ev.delivery?.timestamp;
+      set.deliveredAt = at ? new Date(at) : new Date();
+      status = "delivered";
+      break;
+    case "Bounce":
+      at = ev.bounce?.timestamp;
+      set.bouncedAt = at ? new Date(at) : new Date();
+      set.bounceType = [ev.bounce?.bounceType, ev.bounce?.bounceSubType].filter(Boolean).join("/") || null;
+      detail = set.bounceType || undefined;
+      // Un rebote transitorio queda registrado pero no cambia el status.
+      if (ev.bounce?.bounceType === "Permanent") status = "bounced";
+      break;
+    case "Complaint":
+      at = ev.complaint?.timestamp;
+      set.complainedAt = at ? new Date(at) : new Date();
+      status = "complained";
+      break;
+    case "DeliveryDelay":
+      at = ev.deliveryDelay?.timestamp;
+      set.delayedAt = at ? new Date(at) : new Date();
+      detail = ev.deliveryDelay?.delayType;
+      break;
+    case "Open":
+      at = ev.open?.timestamp;
+      set.openedAt = at ? new Date(at) : new Date();
+      break;
+    case "Reject":
+    case "Rendering Failure":
+    case "RenderingFailure":
+      status = "failed";
+      detail = ev.reject?.reason || ev.failure?.errorMessage;
+      break;
+    default:
+      // Send, Click, Subscription: no se guardan en emaillogs.
+      return null;
+  }
+  const event = { type, at: at ? new Date(at) : new Date(), ...(detail ? { detail: String(detail).slice(0, 120) } : {}) };
+  return { messageId, set, event, status };
+};
+
+const actualizarEmailLog = async (message) => {
+  const u = emailLogUpdateFromEvent(message);
+  if (!u) return false;
+  if (mongoose.connection?.readyState !== 1 || !mongoose.connection.db) return false;
+  const col = mongoose.connection.db.collection("emaillogs");
+  const log = await col.findOne({ sesMessageId: u.messageId }, { projection: { status: 1, openedAt: 1, deliveredAt: 1 } });
+  if (!log) return false; // envío anterior a los logs, o de otro servicio
+  const set = { ...u.set, updatedAt: new Date() };
+  // Solo la primera entrega y la primera apertura.
+  if (set.openedAt && log.openedAt) delete set.openedAt;
+  if (set.deliveredAt && log.deliveredAt) delete set.deliveredAt;
+  if (u.status && (EMAILLOG_RANK[u.status] ?? 0) > (EMAILLOG_RANK[log.status] ?? 0)) set.status = u.status;
+  await col.updateOne(
+    { _id: log._id },
+    { $set: set, $push: { sesEvents: { $each: [u.event], $slice: -EMAILLOG_MAX_EVENTS } } }
+  );
+  return true;
+};
 
 // Marca el log como rebotado/quejado y deja el motivo, para poder cruzar
 // después con el estado de la credencial o la salud del destinatario.
@@ -134,6 +214,8 @@ const procesarEvento = async (message) => {
   }
 };
 
+exports.emailLogUpdateFromEvent = emailLogUpdateFromEvent;
+
 exports.handleSnsNotification = async (req, res) => {
   try {
     // SNS manda Content-Type text/plain: el body puede venir sin parsear.
@@ -164,6 +246,11 @@ exports.handleSnsNotification = async (req, res) => {
 
     const message = typeof notification.Message === "string" ? JSON.parse(notification.Message) : notification.Message;
     await procesarEvento(message);
+    try {
+      await actualizarEmailLog(message);
+    } catch (logErr) {
+      logger.warn(`SES: no se pudo actualizar emaillogs (${logErr.message})`);
+    }
 
     // Siempre 200: si respondemos error, SNS reintenta y puede terminar
     // dándonos de baja del tema.
