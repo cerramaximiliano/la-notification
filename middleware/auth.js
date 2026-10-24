@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const User = require("../models/User");
 const logger = require("../config/logger");
 const moment = require("moment");
@@ -124,36 +125,59 @@ const isAdmin = async (req, res, next) => {
   next();
 };
 
+// ¿El Bearer del request es el token de servicio interno (workers)? Comparación
+// en tiempo constante; sin token configurado nunca matchea.
+const isServiceTokenRequest = (req) => {
+  const authHeader = req.headers.authorization || '';
+  const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
+  if (!serviceToken || !authHeader.startsWith('Bearer ')) return false;
+  const token = authHeader.slice(7);
+  const a = Buffer.from(token);
+  const b = Buffer.from(serviceToken);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
 // Middleware para verificar token de servicio (para webhooks internos)
 const verifyServiceToken = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    const serviceToken = process.env.INTERNAL_SERVICE_TOKEN;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token de servicio no proporcionado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Token de servicio no proporcionado'
       });
     }
 
-    const token = authHeader.split(' ')[1];
-
-    if (token !== serviceToken) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token de servicio inválido' 
+    if (!isServiceTokenRequest(req)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Token de servicio inválido'
       });
     }
 
     next();
   } catch (error) {
     logger.error('Error verificando token de servicio:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Error en la autenticación del servicio' 
+    return res.status(500).json({
+      success: false,
+      message: 'Error en la autenticación del servicio'
     });
   }
+};
+
+// Token de servicio (workers) O JWT de un admin. Para rutas que crean alertas
+// en nombre del sistema: los workers (scba-workers, pjn-mis-causas) pegan con
+// INTERNAL_SERVICE_TOKEN y hasta 2026-10-24 recibían 401 porque la ruta sólo
+// aceptaba JWT de admin — la alerta "carpetas archivadas por plan" nunca llegó
+// a ningún usuario.
+const verifyServiceOrAdmin = (req, res, next) => {
+  if (isServiceTokenRequest(req)) {
+    req.isServiceCall = true;
+    req.userId = 'system';
+    return next();
+  }
+  return verifyToken(req, res, (err) => (err ? next(err) : isAdmin(req, res, next)));
 };
 
 // Para mantener compatibilidad con código existente
@@ -165,5 +189,6 @@ module.exports = {
   JWT_CONFIG,
   COOKIE_NAMES,
   authenticate,
-  verifyServiceToken
+  verifyServiceToken,
+  verifyServiceOrAdmin
 };
