@@ -109,11 +109,37 @@ JudicialMovement {
 }
 ```
 
+   Usuarios en modo `immediate` (`preferences.notifications.user.judicialMovements.mode`) no esperan el
+   `notifyAt`, **salvo** los movimientos con `notificationSettings.deferred: true` (ver más abajo):
+```javascript
+{ $or: [
+  { 'notificationSettings.notifyAt': { $lte: now } },
+  { userId: { $in: immediateUserIds }, 'notificationSettings.deferred': { $ne: true } }
+] }
+```
+
 2. **Agrupación por usuario**: Optimiza el envío consolidando múltiples movimientos
 
 3. **Verificación de usuario**: Valida que el usuario existe en la BD
 
 4. **Envío de notificaciones**: Llama a `sendJudicialMovementNotifications`
+
+#### Una notificación por causa y por día (diferidos)
+
+Si la causa ya se avisó hoy por email o WhatsApp (día en hora argentina; límite
+`limits.oneNotificationPerExpedientePerDay`, activo por defecto), lo nuevo de esa causa no se entrega:
+`services/notifications.js` le corre el `notifyAt` al próximo slot diario (`getNextScheduledNotifyAt`,
+19:00 ART del próximo día activo) y lo marca `notificationSettings.deferred: true`. Log:
+`Una notificación por causa y día: N movimientos diferidos a <ISO> (M causa(s) ya avisadas hoy)`.
+
+- Reprogramar el `notifyAt` evita que el diferido salga a las 00:30, cuando cambia el día y el corte deja de
+  aplicar (pasó el 2026-10-06 con GALENO).
+- **Fix 2026-10-27 (`c9564cc`)**: el modo `immediate` ignoraba el `notifyAt`, así que para esos usuarios la
+  reprogramación no servía y los diferidos igual salían a las 00:30 (causa PJN 46424: tres movimientos
+  capturados el 26/10 a las 14:42 ART se entregaron el 27/10 a las 00:30). Ahora el diferimiento marca
+  `deferred` y los dos filtros del modo inmediato (aggregate de `cron/notificationJobs.js` y `find` de
+  `sendJudicialMovementNotifications`) respetan el `notifyAt` de los marcados. Las cédulas no se difieren y
+  siguen con el filtro anterior.
 
 ### 5. Proceso de Notificación
 
@@ -276,6 +302,13 @@ Crear JudicialMovement
 3. Existencia del usuario en BD
 4. Preferencias de notificación del usuario
 5. Logs del cron job
+
+### Problema: Llegan de madrugada (00:30) movimientos del día anterior
+
+Es un diferido por "una notificación por causa y día" que se entregó al cambiar el día. Verificar en
+`judicialmovements` que tenga `notificationSettings.deferred: true` y un `notifyAt` al slot siguiente, y el log
+`movimientos diferidos a` de la noche anterior. Corregido para modo `immediate` el 2026-10-27; un diferido
+anterior a ese fix no tiene la marca.
 
 ### Problema: Latencia alta en notificaciones
 

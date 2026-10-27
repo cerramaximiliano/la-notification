@@ -27,7 +27,9 @@ estaba bien. Arreglo en la app 0.12.6 + hub `f117d96`. Diagnóstico y forma de p
 
 - `judicialMovementNotificationJob` corre según `NOTIFICATION_JUDICIAL_MOVEMENT_CRON` (en producción `*/30 * * * *`,
   el default del código es `*/15`). Un reinicio del proceso justo en el minuto de la corrida la saltea.
-- Toma `judicialmovements` `pending` con `notifyAt <= now`, o todos los del usuario si está en modo `immediate`.
+- Toma `judicialmovements` `pending` con `notifyAt <= now`, o todos los del usuario si está en modo `immediate`
+  (menos los diferidos con `notificationSettings.deferred: true`, que esperan su `notifyAt` — fix 2026-10-27,
+  ver `JUDICIAL_MOVEMENTS_FLOW.md`).
 - **Un aviso por causa y por día, día en hora argentina** ("Una notificación por causa y día: N movimientos
   diferidos…"); días no activos (fin de semana) pasan al próximo día activo.
 - Para ver una corrida: `sudo grep "^<fecha> HH:MM" /var/www/la-notification/logs/pm2-out.log` en worker-003.
