@@ -72,6 +72,9 @@ const judicialMovementSchema = new mongoose.Schema({
   // Configuración de notificación
   notificationSettings: {
     notifyAt: { type: Date, required: true }, // Hora específica para notificar
+    // true cuando el corte "una notificación por causa y día" lo corrió al próximo
+    // slot: el modo inmediato respeta el notifyAt de estos (no los manda a las 00:30)
+    deferred: { type: Boolean },
     channels: [{
       type: String,
       enum: ['email', 'browser'],

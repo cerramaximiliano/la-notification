@@ -1279,6 +1279,12 @@ async function sendJudicialMovementNotifications({
         const immediateMode = jmPrefs.mode === 'immediate';
         const movementsDisabled = jmPrefs.enabled === false;
         const notifyAtFilter = immediateMode ? {} : { 'notificationSettings.notifyAt': { $lte: now } };
+        // Lo diferido por "una notificación por causa y día" respeta su notifyAt
+        // también en modo inmediato: si no, al cambiar el día calendario la
+        // primera corrida (00:30) lo entregaba de madrugada. Pasó el 2026-10-27.
+        const movementTimeFilter = immediateMode
+            ? { $or: [{ 'notificationSettings.deferred': { $ne: true } }, { 'notificationSettings.notifyAt': { $lte: now } }] }
+            : notifyAtFilter;
         if (immediateMode) {
             logger.info(`Usuario ${user.email} en modo de notificación inmediata de movimientos`);
         }
@@ -1286,7 +1292,7 @@ async function sendJudicialMovementNotifications({
         let pendingMovements = await JudicialMovement.find({
             userId,
             notificationStatus: 'pending',
-            ...notifyAtFilter
+            ...movementTimeFilter
         }).sort({ 'movimiento.fecha': -1 });
         // Orden del portal dentro del día: posicionDia asc; los que no la traen
         // (fuentes viejas o sin dato) van al final de su día, nunca arriba.
@@ -1461,7 +1467,7 @@ async function sendJudicialMovementNotifications({
                     try {
                         await JudicialMovement.updateMany(
                             { _id: { $in: diferidos.map(m => m._id) } },
-                            { $set: { 'notificationSettings.notifyAt': proximoSlot } }
+                            { $set: { 'notificationSettings.notifyAt': proximoSlot, 'notificationSettings.deferred': true } }
                         );
                     } catch (reprogErr) {
                         logger.error(`No se pudo reprogramar el notifyAt de los diferidos: ${reprogErr.message}`);

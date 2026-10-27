@@ -801,7 +801,13 @@ async function judicialMovementNotificationJob() {
       logger.warn(`[NOTIFICACIÓN] No se pudieron resolver usuarios en modo inmediato: ${immErr.message}`);
     }
     const pendingTimeFilter = immediateUserIds.length > 0
-      ? { $or: [{ 'notificationSettings.notifyAt': { $lte: now } }, { userId: { $in: immediateUserIds } }] }
+      ? {
+          $or: [
+            { 'notificationSettings.notifyAt': { $lte: now } },
+            // Inmediato, salvo lo diferido por "una por causa y día", que espera su notifyAt.
+            { userId: { $in: immediateUserIds }, 'notificationSettings.deferred': { $ne: true } }
+          ]
+        }
       : { 'notificationSettings.notifyAt': { $lte: now } };
 
     const pendingMovements = await JudicialMovement.aggregate([
