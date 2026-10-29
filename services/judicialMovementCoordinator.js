@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 const moment = require('moment-timezone');
 const logger = require('../config/logger');
 const policyService = require('./notificationPolicyService');
+const { resolveGroupRecipients, resolveOwnerTeamRecipients } = require('./teamRecipients');
 
 // Configuración
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
@@ -97,17 +98,34 @@ function filterMovementsByDate(causa, targetDate) {
  * causa. Este coordinador solo procesa colecciones PJN (CAUSA_COLLECTIONS),
  * así que la exclusión aplica siempre. Si se pasa `stats`, suma en
  * stats.usuariosSinCobertura los usuarios omitidos por este motivo.
+ *
+ * Carpetas de equipo (Folder.groupId): además del owner (Folder.userId) se
+ * suman los miembros activos del grupo (teamRecipients.resolveGroupRecipients).
+ * La cobertura es de la carpeta, así que vale para todos sus destinatarios:
+ * entran al mismo conjunto covered/uncovered que el owner. Si se pasa `stats`,
+ * suma en stats.destinatariosEquipo los userIds agregados por equipo.
  */
 async function getUsersForCausa(Folder, causaId, includeArchived = true, stats = null) {
   const query = includeArchived ? { causaId } : { causaId, archived: { $ne: true } };
-  const folders = await Folder.find(query).select('userId causaCredentialCovered').lean();
+  const folders = await Folder.find(query).select('userId groupId causaCredentialCovered').lean();
   const covered = new Set();
   const uncovered = new Set();
+  const groupCache = new Map();
   for (const f of folders) {
+    const target = f.causaCredentialCovered === false ? uncovered : covered;
     const uid = f.userId?.toString();
-    if (!uid) continue;
-    if (f.causaCredentialCovered === false) uncovered.add(uid);
-    else covered.add(uid);
+    if (uid) target.add(uid);
+    // Carpeta de equipo: owner + miembros activos, con la cobertura de ESA carpeta.
+    // Con groupId, ese grupo; sin groupId (carpetas anteriores al equipo o creadas por
+    // la sincronización), el equipo activo del dueño («la cuenta del owner es el equipo»).
+    const teamIds = f.groupId
+      ? await resolveGroupRecipients(f.groupId, groupCache)
+      : (uid ? await resolveOwnerTeamRecipients(uid, groupCache) : []);
+    for (const tid of teamIds) {
+      if (tid === uid) continue;
+      if (stats) stats.destinatariosEquipo = (stats.destinatariosEquipo || 0) + 1;
+      target.add(tid);
+    }
   }
   // Un usuario cuenta como omitido solo si NINGUNA de sus carpetas de la causa está cubierta.
   const omitted = [...uncovered].filter(uid => !covered.has(uid));
@@ -158,6 +176,7 @@ async function coordinateJudicialMovements(options = {}) {
     movimientosFiltrados: 0,
     usuariosVinculados: 0,
     usuariosSinCobertura: 0,
+    destinatariosEquipo: 0,
     notificacionesExistentes: 0,
     notificacionesCreadas: 0,
     errores: 0,

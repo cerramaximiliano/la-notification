@@ -5,6 +5,7 @@ const { JudicialMovement, User, Folder } = require('../models');
 const authMiddleware = require('../middleware/auth');
 const moment = require('moment');
 const policyService = require('../services/notificationPolicyService');
+const { resolveGroupRecipients, resolveOwnerTeamRecipients, buildTeamPairs, teamKeyOf } = require('../services/teamRecipients');
 
 /**
  * Webhook para recibir movimientos judiciales del día
@@ -31,19 +32,57 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       skippedDeactivated: 0,
       skippedReserved: 0,
       skippedSinCarpeta: 0,
+      destinatariosEquipo: 0,
       duplicates: 0,
       errors: []
     };
 
+    const batchUserIds = [...new Set(movements.map((mv) => mv && mv.userId).filter(Boolean).map(String))];
+    const batchCausaIds = [...new Set(movements.map((mv) => mv && mv.expediente && mv.expediente.id).filter(Boolean).map(String))];
+
+    // Carpetas de equipo (2026-10-29): el payload trae el movimiento solo para
+    // el owner de la carpeta (Folder.userId). Si la carpeta tiene groupId, el
+    // movimiento se replica a los miembros activos del grupo con la cobertura
+    // de ESA carpeta. Un find por batch + un lookup por grupo; best-effort.
+    let teamPairs = { extraRecipients: new Map(), folderPairs: new Set(), reservedPairs: new Set(), userIds: [] };
+    try {
+      // Sin groupId también cuenta: las carpetas anteriores al equipo (o creadas por la
+      // sincronización) son del owner, y el owner puede tener un equipo activo.
+      const teamFolders = await Folder.find(
+        { userId: { $in: batchUserIds }, causaId: { $in: batchCausaIds } },
+        { userId: 1, causaId: 1, groupId: 1, causaCredentialCovered: 1 }
+      ).lean();
+      if (teamFolders.length > 0) {
+        const groupCache = new Map();
+        const recipientsByGroup = new Map();
+        for (const f of teamFolders) {
+          const key = teamKeyOf(f);
+          if (!key || recipientsByGroup.has(key)) continue;
+          recipientsByGroup.set(
+            key,
+            f.groupId
+              ? await resolveGroupRecipients(f.groupId, groupCache)
+              : await resolveOwnerTeamRecipients(String(f.userId), groupCache)
+          );
+        }
+        teamPairs = buildTeamPairs(teamFolders, recipientsByGroup);
+        if (teamPairs.userIds.length > 0) {
+          logger.info(`Webhook daily-movements: ${teamFolders.length} carpeta(s) de equipo en el batch, ${teamPairs.userIds.length} destinatario(s) de equipo adicionales`);
+        }
+      }
+    } catch (lookupError) {
+      logger.warn(`Webhook daily-movements: no se pudo resolver carpetas de equipo: ${lookupError.message}`);
+    }
+
     // Usuarios desactivados: no crear ni resetear sus movimientos — el cron de
     // notificación los descartaría igual (isActive === false) y solo generan
-    // churn diario de docs 'skipped'. Un batch puede traer varios usuarios,
-    // se resuelven de una sola vez.
-    const batchUserIds = [...new Set(movements.map((mv) => mv && mv.userId).filter(Boolean).map(String))];
+    // churn diario de docs 'skipped'. Un batch puede traer varios usuarios
+    // (más los destinatarios de equipo), se resuelven de una sola vez.
+    const allUserIds = [...new Set([...batchUserIds, ...teamPairs.userIds])];
     let deactivatedUserIds = new Set();
     try {
       const deactivated = await User.find(
-        { _id: { $in: batchUserIds }, isActive: false },
+        { _id: { $in: allUserIds }, isActive: false },
         { _id: 1 }
       ).lean();
       deactivatedUserIds = new Set(deactivated.map((u) => String(u._id)));
@@ -68,6 +107,8 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         { userId: 1, causaId: 1 }
       ).lean();
       reservedPairs = new Set(reserved.map((f) => `${f.userId}|${f.causaId}`));
+      // Destinatarios de equipo cuya carpeta de equipo no tiene cobertura.
+      for (const pair of teamPairs.reservedPairs) reservedPairs.add(pair);
       if (reservedPairs.size > 0) {
         logger.info(`Webhook daily-movements: ${reservedPairs.size} par(es) usuario|causa reservada sin cobertura en el batch, sus movimientos PJN se omiten`);
       }
@@ -83,12 +124,13 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     try {
       const cfg = await policyService.getConfigCached();
       if (cfg?.limits?.requireFolderForDelivery === true) {
-        const causaIds = [...new Set(movements.map((mv) => mv && mv.expediente && mv.expediente.id).filter(Boolean).map(String))];
         const conCarpeta = await Folder.find(
-          { userId: { $in: batchUserIds }, causaId: { $in: causaIds } },
+          { userId: { $in: batchUserIds }, causaId: { $in: batchCausaIds } },
           { userId: 1, causaId: 1 }
         ).lean();
         paresConCarpeta = new Set(conCarpeta.map((f) => `${f.userId}|${f.causaId}`));
+        // La carpeta de equipo también cuenta como carpeta del destinatario.
+        for (const pair of teamPairs.folderPairs) paresConCarpeta.add(pair);
       }
     } catch (lookupError) {
       logger.warn(`Webhook daily-movements: no se pudo resolver carpetas del batch: ${lookupError.message}`);
@@ -122,30 +164,17 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
 
       try {
         const {
-          userId,
+          userId: ownerUserId,
           expediente,
           movimiento
         } = movement;
 
         // Validar campos requeridos
-        if (!userId) {
+        if (!ownerUserId) {
           throw new Error('userId es requerido');
-        }
-        if (deactivatedUserIds.has(String(userId))) {
-          results.skippedDeactivated++;
-          continue;
         }
         if (!expediente || !expediente.id) {
           throw new Error('expediente.id es requerido');
-        }
-        // Solo fuente PJN (default): las cédulas y otras fuentes no pasan por cobertura.
-        if ((movement.source || 'pjn') === 'pjn' && reservedPairs.has(`${userId}|${expediente.id}`)) {
-          results.skippedReserved++;
-          continue;
-        }
-        if (paresConCarpeta && !paresConCarpeta.has(`${userId}|${expediente.id}`)) {
-          results.skippedSinCarpeta++;
-          continue;
         }
         if (!movimiento || !movimiento.fecha) {
           throw new Error('movimiento.fecha es requerido');
@@ -169,95 +198,69 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
           throw new Error(`Error al procesar fecha: ${dateError.message}`);
         }
 
-        // Información para logging
-        movementInfo = {
-          userId,
-          expedienteId: expediente.id,
-          expedienteNumber: expediente.number,
-          fecha: fechaNormalizada,
-          tipo: movimiento.tipo
-        };
+        // Destinatarios: el owner del payload y, si la carpeta es de equipo,
+        // los miembros activos del grupo. Cada uno pasa por los mismos filtros
+        // (desactivado, causa reservada, sin carpeta) y tiene su propio doc.
+        const extraTargets = teamPairs.extraRecipients.get(`${ownerUserId}|${expediente.id}`) || [];
+        const targets = [String(ownerUserId), ...extraTargets];
 
-        // Generar clave única para evitar duplicados (usando fecha normalizada y hash del detalle)
-        const uniqueKey = JudicialMovement.generateUniqueKey(
-          userId,
-          expediente.id,
-          fechaNormalizada,
-          movimiento.tipo,
-          movimiento.detalle
-        );
-
-        logger.info(`Procesando movimiento - userId: ${userId}, expediente: ${expediente.id}, fecha: ${fechaNormalizada}, tipo: ${movimiento.tipo}, uniqueKey: ${uniqueKey}`);
-
-        // Verificar si el movimiento ya existe
-        const existingMovement = await JudicialMovement.findOne({ uniqueKey });
-
-        if (existingMovement) {
-          // El movimiento ya existe — dos caminos según su estado:
-          //   - sent: NO re-notificar (evita emails duplicados cuando un worker
-          //     re-detecta el mismo movimiento por cambio de key, backfill o
-          //     limpieza administrativa). Sólo refrescamos metadata por si
-          //     detalle/url/caratula cambió.
-          //   - skipped por "Causa reservada: credencial sin cobertura": mismo
-          //     tratamiento que sent — NO se resucita a pending; el usuario no
-          //     tiene credencial que cubra la causa y volver a encolarlo solo
-          //     lo haría caer de nuevo en skipped (o notificarlo si el enforcement
-          //     no lo viera). Los otros motivos de skipped sí se resetean.
-          //   - pending / failed: resetear para que el procesador lo reintente.
-          logger.info(`Movimiento existente encontrado - _id: ${existingMovement._id}, estado anterior: ${existingMovement.notificationStatus}`);
-          const skippedReserved = existingMovement.notificationStatus === 'skipped'
-            && Array.isArray(existingMovement.notifications)
-            && existingMovement.notifications.some((n) => typeof n?.details === 'string' && n.details.startsWith('Causa reservada'));
-
-          existingMovement.expediente = {
-            id: expediente.id,
-            number: expediente.number,
-            year: expediente.year,
-            label: expediente.label || undefined,
-            fuero: expediente.fuero,
-            caratula: expediente.caratula,
-            objeto: expediente.objeto
-          };
-          existingMovement.movimiento = {
-            fecha: new Date(movimiento.fecha),
-            tipo: movimiento.tipo,
-            detalle: movimiento.detalle,
-            url: movimiento.url,
-            posicionDia: Number.isFinite(movimiento.posicionDia) ? movimiento.posicionDia : undefined,
-            sourceRef: movimiento.sourceRef,
-            hasPdf: movimiento.hasPdf,
-            esSentencia: movimiento.esSentencia
-          };
-          if (movement.source) {
-            existingMovement.source = movement.source;
+        for (const userId of targets) {
+          if (userId !== String(ownerUserId)) results.destinatariosEquipo++;
+          if (deactivatedUserIds.has(userId)) {
+            results.skippedDeactivated++;
+            continue;
           }
-
-          if (existingMovement.notificationStatus === 'sent') {
-            // Ya notificado con éxito — mantener estado, solo persistir metadata.
-            await existingMovement.save();
-            logger.info(`Movimiento ya notificado — skip re-envío - uniqueKey: ${uniqueKey}`);
-            results.skipped++;
-          } else if (skippedReserved) {
-            // Descartado por causa reservada sin cobertura — mantener estado, solo persistir metadata.
-            await existingMovement.save();
-            logger.info(`Movimiento descartado por causa reservada sin cobertura — no se resucita - uniqueKey: ${uniqueKey}`);
+          // Solo fuente PJN (default): las cédulas y otras fuentes no pasan por cobertura.
+          if ((movement.source || 'pjn') === 'pjn' && reservedPairs.has(`${userId}|${expediente.id}`)) {
             results.skippedReserved++;
-          } else {
-            existingMovement.notificationSettings = {
-              notifyAt,
-              channels: ['email', 'browser']
-            };
-            existingMovement.notificationStatus = 'pending';
-            existingMovement.notifications = [];
-            await existingMovement.save();
-            logger.info(`Movimiento reseteado a pending para reintento - uniqueKey: ${uniqueKey}, _id: ${existingMovement._id}`);
-            results.updated++;
+            continue;
           }
-        } else {
-          // Movimiento nuevo - crearlo
-          const newMovement = await JudicialMovement.create({
+          if (paresConCarpeta && !paresConCarpeta.has(`${userId}|${expediente.id}`)) {
+            results.skippedSinCarpeta++;
+            continue;
+          }
+
+          // Información para logging
+          movementInfo = {
             userId,
-            expediente: {
+            expedienteId: expediente.id,
+            expedienteNumber: expediente.number,
+            fecha: fechaNormalizada,
+            tipo: movimiento.tipo
+          };
+
+          // Generar clave única para evitar duplicados (usando fecha normalizada y hash del detalle)
+          const uniqueKey = JudicialMovement.generateUniqueKey(
+            userId,
+            expediente.id,
+            fechaNormalizada,
+            movimiento.tipo,
+            movimiento.detalle
+          );
+
+          logger.info(`Procesando movimiento - userId: ${userId}, expediente: ${expediente.id}, fecha: ${fechaNormalizada}, tipo: ${movimiento.tipo}, uniqueKey: ${uniqueKey}`);
+
+          // Verificar si el movimiento ya existe
+          const existingMovement = await JudicialMovement.findOne({ uniqueKey });
+
+          if (existingMovement) {
+            // El movimiento ya existe — dos caminos según su estado:
+            //   - sent: NO re-notificar (evita emails duplicados cuando un worker
+            //     re-detecta el mismo movimiento por cambio de key, backfill o
+            //     limpieza administrativa). Sólo refrescamos metadata por si
+            //     detalle/url/caratula cambió.
+            //   - skipped por "Causa reservada: credencial sin cobertura": mismo
+            //     tratamiento que sent — NO se resucita a pending; el usuario no
+            //     tiene credencial que cubra la causa y volver a encolarlo solo
+            //     lo haría caer de nuevo en skipped (o notificarlo si el enforcement
+            //     no lo viera). Los otros motivos de skipped sí se resetean.
+            //   - pending / failed: resetear para que el procesador lo reintente.
+            logger.info(`Movimiento existente encontrado - _id: ${existingMovement._id}, estado anterior: ${existingMovement.notificationStatus}`);
+            const skippedReserved = existingMovement.notificationStatus === 'skipped'
+              && Array.isArray(existingMovement.notifications)
+              && existingMovement.notifications.some((n) => typeof n?.details === 'string' && n.details.startsWith('Causa reservada'));
+
+            existingMovement.expediente = {
               id: expediente.id,
               number: expediente.number,
               year: expediente.year,
@@ -265,8 +268,8 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               fuero: expediente.fuero,
               caratula: expediente.caratula,
               objeto: expediente.objeto
-            },
-            movimiento: {
+            };
+            existingMovement.movimiento = {
               fecha: new Date(movimiento.fecha),
               tipo: movimiento.tipo,
               detalle: movimiento.detalle,
@@ -275,19 +278,68 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               sourceRef: movimiento.sourceRef,
               hasPdf: movimiento.hasPdf,
               esSentencia: movimiento.esSentencia
-            },
-            source: movement.source || 'pjn',
-            notificationSettings: {
-              notifyAt,
-              channels: ['email', 'browser']
-            },
-            uniqueKey,
-            notificationStatus: 'pending'
-          });
+            };
+            if (movement.source) {
+              existingMovement.source = movement.source;
+            }
 
-          logger.info(`Movimiento nuevo creado - uniqueKey: ${uniqueKey}, _id: ${newMovement._id}`);
-          results.created++;
-        }
+            if (existingMovement.notificationStatus === 'sent') {
+              // Ya notificado con éxito — mantener estado, solo persistir metadata.
+              await existingMovement.save();
+              logger.info(`Movimiento ya notificado — skip re-envío - uniqueKey: ${uniqueKey}`);
+              results.skipped++;
+            } else if (skippedReserved) {
+              // Descartado por causa reservada sin cobertura — mantener estado, solo persistir metadata.
+              await existingMovement.save();
+              logger.info(`Movimiento descartado por causa reservada sin cobertura — no se resucita - uniqueKey: ${uniqueKey}`);
+              results.skippedReserved++;
+            } else {
+              existingMovement.notificationSettings = {
+                notifyAt,
+                channels: ['email', 'browser']
+              };
+              existingMovement.notificationStatus = 'pending';
+              existingMovement.notifications = [];
+              await existingMovement.save();
+              logger.info(`Movimiento reseteado a pending para reintento - uniqueKey: ${uniqueKey}, _id: ${existingMovement._id}`);
+              results.updated++;
+            }
+          } else {
+            // Movimiento nuevo - crearlo
+            const newMovement = await JudicialMovement.create({
+              userId,
+              expediente: {
+                id: expediente.id,
+                number: expediente.number,
+                year: expediente.year,
+                label: expediente.label || undefined,
+                fuero: expediente.fuero,
+                caratula: expediente.caratula,
+                objeto: expediente.objeto
+              },
+              movimiento: {
+                fecha: new Date(movimiento.fecha),
+                tipo: movimiento.tipo,
+                detalle: movimiento.detalle,
+                url: movimiento.url,
+                posicionDia: Number.isFinite(movimiento.posicionDia) ? movimiento.posicionDia : undefined,
+                sourceRef: movimiento.sourceRef,
+                hasPdf: movimiento.hasPdf,
+                esSentencia: movimiento.esSentencia
+              },
+              source: movement.source || 'pjn',
+              notificationSettings: {
+                notifyAt,
+                channels: ['email', 'browser']
+              },
+              uniqueKey,
+              notificationStatus: 'pending'
+            });
+
+            logger.info(`Movimiento nuevo creado - uniqueKey: ${uniqueKey}, _id: ${newMovement._id}`);
+            results.created++;
+          }
+        } // fin for targets
       } catch (error) {
         if (error.code === 11000) {
           // Error de duplicado
@@ -318,7 +370,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       }
     }
 
-    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.skippedDeactivated} de usuarios desactivados, ${results.skippedReserved} de causas reservadas sin cobertura, ${results.errors.length} errores`);
+    logger.info(`Movimientos procesados: ${results.created} creados, ${results.updated} actualizados, ${results.duplicates} duplicados, ${results.skippedDeactivated} de usuarios desactivados, ${results.skippedReserved} de causas reservadas sin cobertura, ${results.destinatariosEquipo} destinatarios de equipo, ${results.errors.length} errores`);
 
     if (results.errors.length > 0) {
       logger.error(`Se encontraron ${results.errors.length} errores procesando movimientos. Ver detalles arriba.`);

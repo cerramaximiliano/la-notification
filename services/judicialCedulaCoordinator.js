@@ -6,14 +6,18 @@
  * coordinados (notified=false), crea los JudicialCedula pending faltantes y
  * marca el doc origen como notified para no reprocesarlo.
  *
- * Destinatario = dueño de la credencial (pjn-notifications.userId). La cédula es
- * a su domicilio electrónico, por eso no se expande a otros usuarios del folder.
+ * Destinatarios = dueño de la credencial (pjn-notifications.userId) más, si
+ * ese usuario es owner o miembro activo de un equipo activo (colección
+ * `groups`), el resto del equipo (decisión del dueño, 29/10). Se crea un
+ * JudicialCedula por destinatario (el uniqueKey ya incluye el userId); el doc
+ * origen se marca notified una sola vez. Sin equipo, solo el dueño, como antes.
  */
 
 const mongoose = require('mongoose');
 const logger = require('../config/logger');
 const { calculateNotifyAt } = require('./judicialMovementCoordinator');
 const policyService = require('./notificationPolicyService');
+const { resolveUserTeamRecipients } = require('./teamRecipients');
 
 const SOURCE_COLLECTION = 'pjn-notifications';
 const BATCH_LIMIT = 500;
@@ -51,6 +55,7 @@ async function coordinateJudicialCedulas(options = {}) {
   const stats = {
     notificacionesOrigen: 0,
     cedulasCreadas: 0,
+    cedulasEquipo: 0,
     cedulasExistentes: 0,
     omitidasNoHoy: 0,
     sinUsuario: 0,
@@ -89,6 +94,8 @@ async function coordinateJudicialCedulas(options = {}) {
 
     logger.info(`[CoordinatorCedulas] ${pendientes.length} notificaciones sin coordinar`);
     const notifyAt = config ? policyService.getScheduledNotifyAt(config, 19) : calculateNotifyAt();
+    // Cache de equipos por usuario para esta pasada.
+    const teamCache = new Map();
 
     for (const doc of pendientes) {
       try {
@@ -116,40 +123,58 @@ async function coordinateJudicialCedulas(options = {}) {
           continue;
         }
 
-        const uniqueKey = JudicialCedula.generateUniqueKey(doc.userId.toString(), doc.sourceId);
-        const existing = await JudicialCedula.findOne({ uniqueKey });
+        // Destinatarios: el dueño de la credencial y, si tiene equipo, el resto
+        // de los miembros activos. Una JudicialCedula por destinatario.
+        const ownerId = doc.userId.toString();
+        const recipients = await resolveUserTeamRecipients(ownerId, teamCache);
 
-        if (existing) {
-          stats.cedulasExistentes++;
-        } else {
-          await JudicialCedula.create({
-            userId: new mongoose.Types.ObjectId(doc.userId),
-            expediente: {
-              id: expedienteId,
-              number: expediente.numero,
-              year: expediente.anio,
-              fuero: deriveFuero(expediente),
-              caratula: expediente.caratula || '(sin carátula)'
-            },
-            cedula: {
-              sourceId: doc.sourceId,
-              numeroCedula: doc.numeroCedula,
-              fecha: doc.fecha ? new Date(doc.fecha) : new Date(doc.createdAt || Date.now()),
-              tipo: 'Cédula',
-              oficina: (doc.oficina && doc.oficina.descripcion) || expediente.oficina || null,
-              nombreAutor: doc.nombreAutor || null
-            },
-            notificationSettings: {
-              notifyAt,
-              channels: ['email', 'browser']
-            },
-            uniqueKey,
-            notificationStatus: 'pending'
-          });
-          stats.cedulasCreadas++;
+        for (const recipientId of recipients) {
+          const uniqueKey = JudicialCedula.generateUniqueKey(recipientId, doc.sourceId);
+          const existing = await JudicialCedula.findOne({ uniqueKey });
+
+          if (existing) {
+            stats.cedulasExistentes++;
+            continue;
+          }
+
+          try {
+            await JudicialCedula.create({
+              userId: new mongoose.Types.ObjectId(recipientId),
+              expediente: {
+                id: expedienteId,
+                number: expediente.numero,
+                year: expediente.anio,
+                fuero: deriveFuero(expediente),
+                caratula: expediente.caratula || '(sin carátula)'
+              },
+              cedula: {
+                sourceId: doc.sourceId,
+                numeroCedula: doc.numeroCedula,
+                fecha: doc.fecha ? new Date(doc.fecha) : new Date(doc.createdAt || Date.now()),
+                tipo: 'Cédula',
+                oficina: (doc.oficina && doc.oficina.descripcion) || expediente.oficina || null,
+                nombreAutor: doc.nombreAutor || null
+              },
+              notificationSettings: {
+                notifyAt,
+                channels: ['email', 'browser']
+              },
+              uniqueKey,
+              notificationStatus: 'pending'
+            });
+            stats.cedulasCreadas++;
+            if (recipientId !== ownerId) stats.cedulasEquipo++;
+          } catch (error) {
+            // Duplicado por carrera: ya existe para este destinatario, seguir con el resto.
+            if (error.code === 11000) {
+              stats.cedulasExistentes++;
+            } else {
+              throw error;
+            }
+          }
         }
 
-        // Marcar el doc origen como coordinado.
+        // Marcar el doc origen como coordinado (una sola vez, con todos los destinatarios creados).
         await sourceColl.updateOne(
           { _id: doc._id },
           { $set: { notified: true, notifiedAt: new Date() } }

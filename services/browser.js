@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const moment = require('moment');
 const momentTz = require('moment-timezone');
 const pushChannel = require('./channels/push');
+const { buildTaskRecipientFilter } = require('./teamRecipients');
+const taskRecipientMarks = require('./taskRecipientMarks');
 
 // Funciones auxiliares reutilizables
 const helpers = {
@@ -109,6 +111,24 @@ const helpers = {
         }
 
         return { shouldNotify, itemDaysInAdvance };
+    },
+
+    /**
+     * Variante por destinatario para tareas: la marca «ya avisada» y la
+     * configuración (notifyOnceOnly / daysInAdvance) son del usuario que se está
+     * procesando, no de la tarea (services/taskRecipientMarks.js).
+     */
+    shouldNotifyTaskRecipient: (task, userId, globalSettings, forceDaily, todayDateString) => {
+        const settings = taskRecipientMarks.effectiveRecipientSettings(task, globalSettings);
+        const shouldNotify = taskRecipientMarks.shouldNotifyRecipient({
+            task,
+            userId,
+            channel: 'browser',
+            notifyOnceOnly: settings.notifyOnceOnly,
+            forceDaily,
+            todayDateString
+        });
+        return { shouldNotify, itemDaysInAdvance: settings.daysInAdvance };
     },
 
     /**
@@ -277,6 +297,12 @@ async function sendBrowserAlerts({
                 $lte: maxFutureDate
             };
         } else if (type === 'task') {
+            // Tareas: se le recuerdan a sus asignados o, sin asignados, a su dueño.
+            // La marca «ya avisada» es por destinatario (notificationRecipients), así
+            // que browserAlertSent no filtra acá: se decide abajo por destinatario.
+            delete baseQuery.userId;
+            delete baseQuery.browserAlertSent;
+            Object.assign(baseQuery, buildTaskRecipientFilter(userObjectId));
             baseQuery.status = { $nin: ['completada', 'cancelada'] };
             baseQuery.checked = false;
             baseQuery[dateField] = {
@@ -292,12 +318,9 @@ async function sendBrowserAlerts({
         const upcomingItems = initialItems.filter(item => {
             // Verificar si el elemento está en el rango específico
             const itemDate = new Date(item[dateField]);
-            const { shouldNotify, itemDaysInAdvance } = helpers.shouldNotifyItem(
-                item,
-                userSettings,
-                forceDaily,
-                todayDateString
-            );
+            const { shouldNotify, itemDaysInAdvance } = type === 'task'
+                ? helpers.shouldNotifyTaskRecipient(item, userId, userSettings, forceDaily, todayDateString)
+                : helpers.shouldNotifyItem(item, userSettings, forceDaily, todayDateString);
 
             // Calcular fecha futura específica para este elemento
             const itemFutureDate = moment
@@ -325,13 +348,20 @@ async function sendBrowserAlerts({
             date: new Date(),
             type: 'browser',
             success: true,
-            details: `Alerta creada en el navegador`
+            details: type === 'task'
+                ? `Alerta creada en el navegador para ${userId}`
+                : `Alerta creada en el navegador`
         };
+
+        // Tareas con responsables: la configuración es de cada destinatario, no se
+        // espeja en la tarea (si no, el primero procesado se la impone al resto).
+        const teamItems = type === 'task' ? upcomingItems.filter(item => taskRecipientMarks.hasAssignees(item)) : [];
+        const individualItems = upcomingItems.filter(item => !teamItems.includes(item));
 
         // Inicializar configuración para elementos sin ella
         await ItemModel.updateMany(
             {
-                _id: { $in: upcomingItems.map(item => item._id) },
+                _id: { $in: individualItems.map(item => item._id) },
                 notificationSettings: { $exists: false }
             },
             {
@@ -388,23 +418,36 @@ async function sendBrowserAlerts({
                 pushChannel.pushAlert(userId, newAlert);
 
                 processedItems.push(item);
-                
+
+                // Tareas: marca por destinatario (la que decide la próxima vez).
+                if (type === 'task') {
+                    await taskRecipientMarks.markTaskRecipientNotified(ItemModel, item, userId, 'browser', {
+                        now: notificationDetails.date
+                    });
+                }
+
             } catch (error) {
                 logger.error(`Error procesando alerta para ${type} ${item._id}:`, error);
             }
         }
-        
-        // Usar operación atómica para agregar notificaciones sin duplicados
-        const notificationResult = await addNotificationsSequential(
-            ItemModel,
-            processedItems,
-            notificationDetails,
-            {
-                windowSeconds: 5,
-                userSettings: userSettings
-            }
-        );
-        
+
+        // Usar operación atómica para agregar notificaciones sin duplicados.
+        // Las marcas por tarea (notifications/browserAlertSent) se siguen escribiendo
+        // por compatibilidad; en tareas con responsables no se espeja la configuración.
+        const notificationResult = { total: 0, successful: 0, skipped: 0, failed: 0 };
+        const batches = [
+            [processedItems.filter(item => !teamItems.includes(item)), { windowSeconds: 5, userSettings: userSettings }],
+            [processedItems.filter(item => teamItems.includes(item)), { windowSeconds: 5 }]
+        ];
+        for (const [batch, options] of batches) {
+            if (batch.length === 0) continue;
+            const r = await addNotificationsSequential(ItemModel, batch, notificationDetails, options);
+            notificationResult.total += r.total;
+            notificationResult.successful += r.successful;
+            notificationResult.skipped += r.skipped;
+            notificationResult.failed += r.failed;
+        }
+
         logger.info(`Notificaciones de browser agregadas: ${notificationResult.successful}/${notificationResult.total}, omitidas: ${notificationResult.skipped}, errores: ${notificationResult.failed}`);
 
         logger.info(`Alertas de navegador creadas para el usuario ${user.email} para ${upcomingItems.length} ${type}s`);

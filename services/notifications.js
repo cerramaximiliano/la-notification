@@ -5,6 +5,8 @@ const logger = require("../config/logger");
 const { sendEmail, sendAdminEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder, PlanBannerSend } = require("../models");
 const policyService = require("./notificationPolicyService");
+const { buildTaskRecipientFilter } = require("./teamRecipients");
+const taskRecipientMarks = require("./taskRecipientMarks");
 const { sendJudicialMovementDigest } = require("./channels/whatsapp");
 const { addNotificationAtomic } = require("./notificationHelper");
 
@@ -813,9 +815,10 @@ async function sendTaskNotifications({
 
         const todayDateString = today.toISOString().split('T')[0];
 
-        // Búsqueda inicial de tareas en el rango máximo de fechas
+        // Búsqueda inicial de tareas en el rango máximo de fechas.
+        // Destinatario: asignados de la tarea o, sin asignados, su dueño.
         let initialTasks = await Task.find({
-            userId: userObjectId,
+            ...buildTaskRecipientFilter(userObjectId),
             status: { $nin: ['completada', 'cancelada'] },
             checked: false,
             dueDate: {
@@ -824,20 +827,21 @@ async function sendTaskNotifications({
             }
         }).sort({ dueDate: 1 });
 
-        // Ahora filtramos manualmente según la configuración específica de cada tarea
+        // Ahora filtramos manualmente según la configuración específica de cada tarea.
+        // Configuración y marca «ya avisada» son por DESTINATARIO (el usuario que se
+        // procesa): en tareas con responsables cada uno usa sus preferencias y su
+        // propia marca en notificationRecipients; en tareas sin responsables manda
+        // la configuración de la tarea y las marcas viejas valen para el dueño
+        // (services/taskRecipientMarks.js).
         const upcomingTasks = initialTasks.filter(task => {
-            // Determinar los días de anticipación para esta tarea específica
-            // Orden de prioridad:
-            // 1. Configuración específica de la tarea
-            // 2. Configuración global del usuario
-            const taskDaysInAdvance =
-                (task.notificationSettings && typeof task.notificationSettings.daysInAdvance === 'number') ?
-                    task.notificationSettings.daysInAdvance :
-                    globalDaysInAdvance;
+            const settings = taskRecipientMarks.effectiveRecipientSettings(task, {
+                ...userTaskExpirationSettings,
+                daysInAdvance: globalDaysInAdvance
+            });
 
             // Calcular la fecha límite específica para esta tarea
             const taskFutureDate = new Date(today);
-            taskFutureDate.setDate(today.getDate() + taskDaysInAdvance);
+            taskFutureDate.setDate(today.getDate() + settings.daysInAdvance);
             taskFutureDate.setHours(23, 59, 59, 999);
 
             // Verificar si la tarea está dentro del rango específico
@@ -846,48 +850,15 @@ async function sendTaskNotifications({
             // La tarea debe estar dentro del rango de días configurado
             const isInRange = dueDate <= taskFutureDate;
 
-            // Verificar si ya fue notificada (según la configuración de notifyOnceOnly)
-            let shouldNotify = true;
-
-            // Determinar si la tarea permite múltiples notificaciones
-            const notifyOnceOnly =
-                (task.notificationSettings && typeof task.notificationSettings.notifyOnceOnly === 'boolean') ?
-                    task.notificationSettings.notifyOnceOnly :
-                    userTaskExpirationSettings.notifyOnceOnly;
-
-            // Si está configurada para notificar solo una vez y ya tiene notificaciones por email
-            if (notifyOnceOnly &&
-                task.notifications &&
-                task.notifications.some(n => n.type === 'email')) {
-                shouldNotify = false;
-            }
-
-            // Si permite múltiples notificaciones, verificar si ya se notificó hoy
-            if (shouldNotify &&
-                !notifyOnceOnly &&
-                task.notifications &&
-                task.notifications.some(n =>
-                    n.type === 'email' &&
-                    n.date >= new Date(todayDateString) &&
-                    n.date < new Date(new Date(todayDateString).setDate(new Date(todayDateString).getDate() + 1))
-                )) {
-                shouldNotify = false;
-            }
-
-            // Si estamos forzando notificaciones diarias, ignoramos las verificaciones anteriores
-            if (forceDaily) {
-                shouldNotify = true;
-
-                // Pero aún así verificamos si ya se notificó hoy
-                if (task.notifications &&
-                    task.notifications.some(n =>
-                        n.type === 'email' &&
-                        n.date >= new Date(todayDateString) &&
-                        n.date < new Date(new Date(todayDateString).setDate(new Date(todayDateString).getDate() + 1))
-                    )) {
-                    shouldNotify = false;
-                }
-            }
+            // ¿Ya se le avisó a este destinatario? (notifyOnceOnly / hoy / forceDaily)
+            const shouldNotify = taskRecipientMarks.shouldNotifyRecipient({
+                task,
+                userId: userObjectId,
+                channel: 'email',
+                notifyOnceOnly: settings.notifyOnceOnly,
+                forceDaily,
+                todayDateString
+            });
 
             // La tarea debe estar en el rango y cumplir con las reglas de notificación
             return isInRange && shouldNotify;
@@ -953,10 +924,14 @@ async function sendTaskNotifications({
         };
 
         // Inicializar la configuración de notificaciones para tareas sin ella,
-        // usando la configuración de tareas del usuario
+        // usando la configuración de tareas del usuario. Solo en tareas sin
+        // responsables: con responsables la configuración es de cada destinatario.
+        const individualTaskIds = upcomingTasks
+            .filter(task => !taskRecipientMarks.hasAssignees(task))
+            .map(task => task._id);
         await Task.updateMany(
             {
-                _id: { $in: notifiedTaskIds },
+                _id: { $in: individualTaskIds },
                 notificationSettings: { $exists: false }
             },
             {
@@ -978,11 +953,19 @@ async function sendTaskNotifications({
             { $set: { notifications: [] } }
         );
 
-        // Añadir la notificación a todas las tareas
+        // Añadir la notificación a todas las tareas (marca por tarea, se mantiene
+        // por compatibilidad)
         await Task.updateMany(
             { _id: { $in: notifiedTaskIds } },
             { $push: { notifications: notificationDetails } }
         );
+
+        // Marca por destinatario: la que decide la próxima vez para este usuario.
+        for (const task of upcomingTasks) {
+            await taskRecipientMarks.markTaskRecipientNotified(Task, task, userObjectId, 'email', {
+                now: notificationDetails.date
+            });
+        }
 
         logger.info(`Notificación de tareas enviada a ${user.email} para ${upcomingTasks.length} tareas`);
 

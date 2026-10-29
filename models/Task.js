@@ -45,6 +45,35 @@ const NotificationRecordSchema = new Schema({
   }
 }, { _id: false });
 
+// Esquema de marcas de notificación por destinatario (tareas con responsables).
+// Una entrada por usuario al que se le recordó la tarea: última alerta de
+// navegador / último email y cuántas veces. Reemplaza a browserAlertSent y
+// notifications como fuente de verdad cuando está presente; en documentos sin
+// el campo, las marcas viejas valen como marcas del dueño (services/taskRecipientMarks.js).
+const NotificationRecipientSchema = new Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  // Última alerta de navegador creada para este destinatario
+  browserAlertAt: {
+    type: Date
+  },
+  browserCount: {
+    type: Number,
+    default: 0
+  },
+  // Último email de recordatorio enviado a este destinatario
+  emailAt: {
+    type: Date
+  },
+  emailCount: {
+    type: Number,
+    default: 0
+  }
+}, { _id: false });
+
 const TaskSchema = new Schema(
   {
     name: {
@@ -66,6 +95,12 @@ const TaskSchema = new Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Folder',
       index: true
+    },
+    // Responsables dentro del equipo (lo guarda el hub). Vacío = sin responsable:
+    // la tarea se le recuerda al dueño (userId); con asignados, a ellos.
+    assignedTo: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: []
     },
     status: {
       type: String,
@@ -110,6 +145,12 @@ const TaskSchema = new Schema(
     notifications: {
       type: [NotificationRecordSchema],
       default: []
+    },
+
+    // Marcas de notificación por destinatario (asignados o dueño). Ausente o
+    // vacío = sin marcas nuevas: las marcas de arriba valen para el dueño.
+    notificationRecipients: {
+      type: [NotificationRecipientSchema]
     },
 
     // Configuración de notificaciones específica para esta tarea
