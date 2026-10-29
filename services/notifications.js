@@ -1345,9 +1345,29 @@ async function sendJudicialMovementNotifications({
 
         if (pendingMovements.length > 0) {
             const causaIds = [...new Set(pendingMovements.map(m => m.expediente?.id).filter(Boolean))];
+            // Equipos (29/10/2026): un miembro no tiene carpeta propia de las causas del
+            // equipo (la carpeta es del owner). Si pertenece a un equipo activo, su carpeta
+            // de la causa es la del equipo (groupId) o la del owner.
+            let teamScope = null;
+            try {
+                const uid = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : null;
+                if (uid && mongoose.connection?.db) {
+                    const group = await mongoose.connection.db.collection('groups').findOne(
+                        { status: 'active', $or: [{ owner: uid }, { members: { $elemMatch: { userId: uid, status: 'active' } } }] },
+                        { projection: { _id: 1, owner: 1 } }
+                    );
+                    if (group) teamScope = group;
+                }
+            } catch (teamErr) {
+                logger.warn(`No se pudo resolver el equipo del usuario ${userId}: ${teamErr.message}`);
+            }
             for (const causaId of causaIds) {
                 try {
-                    const folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered').lean();
+                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered').lean();
+                    if (!folder && teamScope) {
+                        folder = await Folder.findOne({ causaId, $or: [{ groupId: teamScope._id }, { userId: teamScope.owner }] })
+                            .select('_id archived folderName causaCredentialCovered').lean();
+                    }
                     if (folder) folderByCausa[causaId] = folder;
                 } catch (folderErr) {
                     logger.warn(`No se pudo resolver folder para causa ${causaId}: ${folderErr.message}`);
