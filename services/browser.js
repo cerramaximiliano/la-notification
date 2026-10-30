@@ -3,6 +3,7 @@ const moment = require('moment');
 const momentTz = require('moment-timezone');
 const pushChannel = require('./channels/push');
 const { buildTaskRecipientFilter } = require('./teamRecipients');
+const eventRecipientsSvc = require('./eventRecipients');
 const taskRecipientMarks = require('./taskRecipientMarks');
 
 // Funciones auxiliares reutilizables
@@ -118,6 +119,19 @@ const helpers = {
      * configuración (notifyOnceOnly / daysInAdvance) son del usuario que se está
      * procesando, no de la tarea (services/taskRecipientMarks.js).
      */
+    shouldNotifyEventRecipient: (event, userId, globalSettings, forceDaily, todayDateString) => {
+        const settings = eventRecipientsSvc.recipientSettings(event, userId, globalSettings);
+        const shouldNotify = taskRecipientMarks.shouldNotifyRecipient({
+            task: event,
+            userId,
+            channel: 'browser',
+            notifyOnceOnly: settings.notifyOnceOnly,
+            forceDaily,
+            todayDateString
+        });
+        return { shouldNotify, itemDaysInAdvance: settings.daysInAdvance };
+    },
+
     shouldNotifyTaskRecipient: (task, userId, globalSettings, forceDaily, todayDateString) => {
         const settings = taskRecipientMarks.effectiveRecipientSettings(task, globalSettings);
         const shouldNotify = taskRecipientMarks.shouldNotifyRecipient({
@@ -288,6 +302,20 @@ async function sendBrowserAlerts({
             browserAlertSent: { $ne: true }
         };
 
+        // Eventos (Equipos, 30/10/2026): candidatos del destinatario y del owner de su
+        // equipo; la marca «ya avisado» es por destinatario (se decide abajo).
+        let eventScope = null;
+        if (type === 'event') {
+            eventScope = await eventRecipientsSvc.scopeEventsForRecipient(userId);
+            // Fuera de un equipo, la consulta de siempre (sin cambios de comportamiento).
+            if (eventScope.ctx) {
+                delete baseQuery.userId;
+                delete baseQuery.browserAlertSent;
+                Object.assign(baseQuery, eventScope.userFilter);
+            }
+        }
+        const teamEvents = type === 'event' && !!(eventScope && eventScope.ctx);
+
         // Añadir condiciones específicas por tipo
         if (type === 'movement' || type === 'event') {
             baseQuery[dateField] = {
@@ -313,6 +341,9 @@ async function sendBrowserAlerts({
 
         // Buscar elementos iniciales
         let initialItems = await ItemModel.find(baseQuery).sort({ [dateField]: 1 });
+        if (teamEvents) {
+            initialItems = await eventRecipientsSvc.keepEventsForRecipient(initialItems, userId, eventScope && eventScope.ctx);
+        }
 
         // Filtrar según configuración específica
         const upcomingItems = initialItems.filter(item => {
@@ -320,7 +351,9 @@ async function sendBrowserAlerts({
             const itemDate = new Date(item[dateField]);
             const { shouldNotify, itemDaysInAdvance } = type === 'task'
                 ? helpers.shouldNotifyTaskRecipient(item, userId, userSettings, forceDaily, todayDateString)
-                : helpers.shouldNotifyItem(item, userSettings, forceDaily, todayDateString);
+                : teamEvents
+                    ? helpers.shouldNotifyEventRecipient(item, userId, userSettings, forceDaily, todayDateString)
+                    : helpers.shouldNotifyItem(item, userSettings, forceDaily, todayDateString);
 
             // Calcular fecha futura específica para este elemento
             const itemFutureDate = moment
@@ -355,7 +388,11 @@ async function sendBrowserAlerts({
 
         // Tareas con responsables: la configuración es de cada destinatario, no se
         // espeja en la tarea (si no, el primero procesado se la impone al resto).
-        const teamItems = type === 'task' ? upcomingItems.filter(item => taskRecipientMarks.hasAssignees(item)) : [];
+        const teamItems = type === 'task'
+            ? upcomingItems.filter(item => taskRecipientMarks.hasAssignees(item))
+            : teamEvents
+                ? upcomingItems.filter(item => String(item.userId) !== String(userId))
+                : [];
         const individualItems = upcomingItems.filter(item => !teamItems.includes(item));
 
         // Inicializar configuración para elementos sin ella
@@ -419,8 +456,8 @@ async function sendBrowserAlerts({
 
                 processedItems.push(item);
 
-                // Tareas: marca por destinatario (la que decide la próxima vez).
-                if (type === 'task') {
+                // Tareas y eventos: marca por destinatario (la que decide la próxima vez).
+                if (type === 'task' || teamEvents) {
                     await taskRecipientMarks.markTaskRecipientNotified(ItemModel, item, userId, 'browser', {
                         now: notificationDetails.date
                     });

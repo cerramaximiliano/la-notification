@@ -218,24 +218,29 @@ const esperados = [String(OWNER), String(M_ACTIVO_1), String(M_ACTIVO_2)].sort()
     assert.deepStrictEqual(v.userIds, []);
   });
 
-  await test('8. buildTaskRecipientFilter: asignado, o dueño sin asignados; Task declara assignedTo', () => {
+  await test('8. buildTaskRecipientFilter: asignados; sin asignados, quien la creó (o el dueño si no hay creador)', () => {
     const f = buildTaskRecipientFilter(String(OWNER));
-    assert.ok(Array.isArray(f.$or) && f.$or.length === 2);
+    assert.ok(Array.isArray(f.$or) && f.$or.length === 3);
     assert.ok(f.$or[0].assignedTo instanceof mongoose.Types.ObjectId && f.$or[0].assignedTo.equals(OWNER));
-    assert.ok(f.$or[1].userId.equals(OWNER));
-    assert.deepStrictEqual(f.$or[1].$or, [{ assignedTo: { $exists: false } }, { assignedTo: { $size: 0 } }]);
     // Se combina por spread sin pisar el resto del filtro.
     const full = { ...f, status: { $nin: ['completada'] }, checked: false };
     assert.ok(full.$or && full.status && full.checked === false);
     // Semántica contra docs en memoria (mismo predicado que Mongo evaluaría).
+    const sinAsignados = (t) => !t.assignedTo || t.assignedTo.length === 0;
     const match = (t, uid) => (t.assignedTo || []).some((a) => String(a) === uid)
-      || (String(t.userId) === uid && (!t.assignedTo || t.assignedTo.length === 0));
+      || (sinAsignados(t) && t.createdBy && String(t.createdBy) === uid)
+      || (sinAsignados(t) && String(t.userId) === uid && (!t.createdBy || String(t.createdBy) === uid));
     const U = String(OWNER); const A = String(M_ACTIVO_1);
     assert.strictEqual(match({ userId: OWNER, assignedTo: [] }, U), true);
     assert.strictEqual(match({ userId: OWNER }, U), true);
     assert.strictEqual(match({ userId: OWNER, assignedTo: [M_ACTIVO_1] }, U), false);   // dueño con asignado → no
     assert.strictEqual(match({ userId: OWNER, assignedTo: [M_ACTIVO_1] }, A), true);    // asignado → sí
     assert.strictEqual(match({ userId: OWNER, assignedTo: [] }, A), false);
+    assert.strictEqual(match({ userId: OWNER, createdBy: M_ACTIVO_1 }, A), true);       // creada por el miembro → él
+    assert.strictEqual(match({ userId: OWNER, createdBy: M_ACTIVO_1 }, U), false);      // y no el owner
+    // El filtro tiene las mismas tres ramas que el predicado.
+    assert.ok(f.$or[1].$and.some((c) => c.createdBy && c.createdBy.equals(OWNER)));
+    assert.ok(f.$or[2].$and.some((c) => c.userId && c.userId.equals(OWNER)));
     // El schema local de Task declara assignedTo (strictQuery descartaría el campo si no).
     const Task = require(path.join(__dirname, '..', 'models', 'Task'));
     const p = Task.schema.path('assignedTo');

@@ -166,7 +166,122 @@ function createTeamRecipients(db) {
     return result;
   }
 
-  return { resolveGroupRecipients, resolveUserTeamRecipients, resolveOwnerTeamRecipients };
+  /**
+   * Contexto de equipo (30/10/2026): { groupId, owner, recipients, settings } o null.
+   * `recipients` = owner + miembros activos (strings); `settings` = settings.notifications
+   * del grupo. Tres formas de llegar: por groupId, por dueño (owner) o por integrante.
+   */
+  async function findContext(filter, key, cache) {
+    if (cache && cache.has(key)) return cache.get(key);
+    let ctx = null;
+    try {
+      const database = getDb();
+      if (database) {
+        const g = await database.collection(GROUPS_COLLECTION).findOne(
+          { status: 'active', ...filter },
+          { projection: { owner: 1, members: 1, 'settings.notifications': 1 } }
+        );
+        if (g) ctx = contextFromGroupDoc(g);
+      }
+    } catch (error) {
+      logger.warn(`[TeamRecipients] Error resolviendo contexto ${key}: ${error.message}`);
+      ctx = null;
+    }
+    if (cache) cache.set(key, ctx);
+    return ctx;
+  }
+  const resolveGroupContext = (groupId, cache) => {
+    const oid = toObjectId(groupId);
+    return oid ? findContext({ _id: oid }, `ctxg:${oid}`, cache) : Promise.resolve(null);
+  };
+  const resolveOwnerTeamContext = (ownerId, cache) => {
+    const oid = toObjectId(ownerId);
+    return oid ? findContext({ owner: oid }, `ctxo:${oid}`, cache) : Promise.resolve(null);
+  };
+  const resolveTeamContextForUser = (userId, cache) => {
+    const oid = toObjectId(userId);
+    return oid
+      ? findContext({ $or: [{ owner: oid }, { members: { $elemMatch: { userId: oid, status: 'active' } } }] }, `ctxu:${oid}`, cache)
+      : Promise.resolve(null);
+  };
+  /** Contexto de una carpeta: su grupo o el equipo activo que posee su dueño. */
+  async function resolveFolderContext(folder, cache) {
+    if (!folder) return null;
+    if (folder.groupId) {
+      const c = await resolveGroupContext(folder.groupId, cache);
+      if (c) return c;
+    }
+    return folder.userId ? resolveOwnerTeamContext(folder.userId, cache) : null;
+  }
+
+  return {
+    resolveGroupRecipients, resolveUserTeamRecipients, resolveOwnerTeamRecipients,
+    resolveGroupContext, resolveOwnerTeamContext, resolveTeamContextForUser, resolveFolderContext
+  };
+}
+
+/** Contexto a partir del doc crudo de `groups`. Función pura. */
+function contextFromGroupDoc(group) {
+  const n = (group.settings && group.settings.notifications) || {};
+  return {
+    groupId: String(group._id),
+    owner: String(group.owner),
+    recipients: recipientsFromGroupDoc(group),
+    settings: {
+      defaultPolicy: n.defaultPolicy === 'responsables' ? 'responsables' : 'todos',
+      members: new Map((Array.isArray(n.members) ? n.members : [])
+        .filter((m) => m && m.userId)
+        .map((m) => [String(m.userId), m.mode]))
+    }
+  };
+}
+
+/**
+ * Destinatarios de un aviso de una carpeta del equipo según las reglas (30/10/2026).
+ * Función pura.
+ *  - Regla de la carpeta: folder.notificationPolicy 'responsables' | 'todos'; 'equipo' o
+ *    vacío → settings.defaultPolicy ('todos' por defecto).
+ *  - Modo del integrante: 'todo' → siempre; 'solo_lo_mio' → solo si es responsable;
+ *    'segun_carpeta' (default) → según la regla de la carpeta.
+ *  - Regla 'responsables' sin responsables vigentes → todos (no se pierde el aviso).
+ *  - Nunca vacío: si nadie queda, el owner.
+ *
+ * @param {{owner, recipients: string[], settings}} ctx contexto del equipo (null → [])
+ * @param {{responsables?, notificationPolicy?}} folder
+ * @returns {string[]}
+ */
+function applyFolderPolicy(ctx, folder) {
+  if (!ctx) return [];
+  const members = ctx.recipients || [];
+  const active = new Set(members);
+  const responsables = new Set(
+    (Array.isArray(folder && folder.responsables) ? folder.responsables : [])
+      .map(String)
+      .filter((id) => active.has(id))
+  );
+  const fp = folder && folder.notificationPolicy;
+  const policy = fp === 'responsables' || fp === 'todos' ? fp : (ctx.settings && ctx.settings.defaultPolicy) || 'todos';
+  const folderWants = (uid) => policy === 'todos' || responsables.size === 0 || responsables.has(uid);
+  const modes = (ctx.settings && ctx.settings.members) || new Map();
+  const out = members.filter((uid) => {
+    const mode = modes.get(uid) || 'segun_carpeta';
+    if (mode === 'todo') return true;
+    if (mode === 'solo_lo_mio') return responsables.has(uid);
+    return folderWants(uid);
+  });
+  return out.length > 0 ? out : [ctx.owner];
+}
+
+/**
+ * Destinatarios de un evento de calendario dentro de un equipo (30/10/2026). Función pura.
+ * Ligado a una carpeta del equipo → regla de la carpeta. Sin carpeta → quien lo creó
+ * (createdBy, o el dueño del evento); si ya no es integrante, el owner.
+ */
+function eventRecipients(ctx, event, folder) {
+  if (!ctx) return event && event.userId ? [String(event.userId)] : [];
+  if (folder) return applyFolderPolicy(ctx, folder);
+  const creator = event && (event.createdBy || event.userId) ? String(event.createdBy || event.userId) : null;
+  return creator && (ctx.recipients || []).includes(creator) ? [creator] : [ctx.owner];
 }
 
 // Instancia por defecto sobre la conexión real (resuelta en forma perezosa,
@@ -204,13 +319,20 @@ function buildTeamPairs(teamFolders, recipientsByGroup) {
   const uncovered = new Set();
   const userIds = new Set();
 
+  const ownerIncluded = new Set();
+  const ownerExcluded = new Set();
   for (const f of Array.isArray(teamFolders) ? teamFolders : []) {
     if (!f || f.causaId == null) continue;
     const owner = f.userId != null ? String(f.userId) : null;
     const causa = String(f.causaId);
     const key = teamKeyOf(f);
-    // Compatibilidad: mapa por groupId pelado (tests y llamadas previas) o por clave g:/o:
-    const recipients = (key && recipientsByGroup.get(key)) || (f.groupId && recipientsByGroup.get(String(f.groupId))) || [];
+    // Por carpeta (clave f:<folderId>, con las reglas de avisos aplicadas) o, por
+    // compatibilidad, por groupId pelado o por clave g:/o: (todos los integrantes).
+    const byFolder = f._id != null ? recipientsByGroup.get(`f:${String(f._id)}`) : undefined;
+    const recipients = byFolder || (key && recipientsByGroup.get(key)) || (f.groupId && recipientsByGroup.get(String(f.groupId))) || [];
+    if (byFolder && owner) {
+      (byFolder.includes(owner) ? ownerIncluded : ownerExcluded).add(`${owner}|${causa}`);
+    }
     const target = f.causaCredentialCovered === false ? uncovered : covered;
     for (const rid of recipients) {
       if (rid === owner) continue;
@@ -228,13 +350,15 @@ function buildTeamPairs(teamFolders, recipientsByGroup) {
   // Misma regla que el coordinador: omitido solo si ninguna carpeta lo cubre.
   const reservedPairs = new Set([...uncovered].filter((p) => !covered.has(p)));
   const folderPairs = new Set([...covered, ...uncovered]);
-  return { extraRecipients, folderPairs, reservedPairs, userIds: [...userIds] };
+  // Dueños que las reglas dejan afuera en TODAS sus carpetas de la causa.
+  const excludedPairs = new Set([...ownerExcluded].filter((p) => !ownerIncluded.has(p)));
+  return { extraRecipients, folderPairs, reservedPairs, excludedPairs, userIds: [...userIds] };
 }
 
 /**
  * Filtro Mongo de "a quién se le recuerda una tarea" para el usuario U:
  * a sus asignados (Task.assignedTo, responsables dentro del equipo) y, si no
- * tiene asignados, a su dueño (Task.userId). Función pura; se combina con el
+ * tiene asignados, a quien la creó (Task.createdBy) o, sin creador, a su dueño (Task.userId). Función pura; se combina con el
  * resto del filtro (status, checked, rango de fechas) con spread.
  *
  * @param {string|ObjectId} userId
@@ -242,21 +366,26 @@ function buildTeamPairs(teamFolders, recipientsByGroup) {
  */
 function buildTaskRecipientFilter(userId) {
   const uid = toObjectId(userId) || userId;
+  // Sin responsables (30/10/2026): a quien la creó; tareas sin createdBy (anteriores a
+  // Equipos o personales) a su dueño, como antes.
+  const sinResponsables = { $or: [{ assignedTo: { $exists: false } }, { assignedTo: { $size: 0 } }] };
   return {
     $or: [
       { assignedTo: uid },
-      {
-        userId: uid,
-        $or: [
-          { assignedTo: { $exists: false } },
-          { assignedTo: { $size: 0 } }
-        ]
-      }
+      { $and: [sinResponsables, { createdBy: uid }] },
+      { $and: [sinResponsables, { userId: uid }, { $or: [{ createdBy: { $exists: false } }, { createdBy: null }, { createdBy: uid }] }] }
     ]
   };
 }
 
 module.exports = {
+  resolveGroupContext: defaultInstance.resolveGroupContext,
+  resolveOwnerTeamContext: defaultInstance.resolveOwnerTeamContext,
+  resolveTeamContextForUser: defaultInstance.resolveTeamContextForUser,
+  resolveFolderContext: defaultInstance.resolveFolderContext,
+  contextFromGroupDoc,
+  applyFolderPolicy,
+  eventRecipients,
   resolveGroupRecipients: defaultInstance.resolveGroupRecipients,
   resolveUserTeamRecipients: defaultInstance.resolveUserTeamRecipients,
   resolveOwnerTeamRecipients: defaultInstance.resolveOwnerTeamRecipients,

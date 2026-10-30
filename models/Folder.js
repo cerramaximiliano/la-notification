@@ -242,6 +242,21 @@ const FolderSchema = new Schema(
       ref: "Group",
       required: false,
     },
+    // Equipos (30/10/2026): espejo de los campos del hub para aplicar las reglas de avisos.
+    responsables: {
+      type: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      default: undefined,
+    },
+    notificationPolicy: {
+      type: String,
+      enum: ["equipo", "responsables", "todos"],
+      default: undefined,
+    },
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
     situationFolder: {
       type: String,
     },

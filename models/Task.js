@@ -153,6 +153,13 @@ const TaskSchema = new Schema(
       type: [NotificationRecipientSchema]
     },
 
+    // Equipos: quién creó la tarea (las tareas sin responsables se le recuerdan a él, 30/10/2026).
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: false
+    },
+
     // Configuración de notificaciones específica para esta tarea
     // (si no está presente, se usa la configuración global del usuario)
     notificationSettings: {

@@ -90,6 +90,22 @@ const EventSchema = new Schema(
       ref: "Group",
       required: false,
     },
+    // Equipos (30/10/2026): quién lo creó y marcas de «ya avisado» por destinatario
+    // (mismo formato que Task.notificationRecipients, ver services/taskRecipientMarks.js).
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
+    notificationRecipients: {
+      type: [new Schema({
+        userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+        browserAlertAt: { type: Date },
+        browserCount: { type: Number, default: 0 },
+        emailAt: { type: Date },
+        emailCount: { type: Number, default: 0 }
+      }, { _id: false })]
+    },
     // Nueva propiedad para controlar notificaciones del navegador
     browserAlertSent: {
       type: Boolean,

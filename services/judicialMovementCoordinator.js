@@ -9,7 +9,7 @@ const mongoose = require('mongoose');
 const moment = require('moment-timezone');
 const logger = require('../config/logger');
 const policyService = require('./notificationPolicyService');
-const { resolveGroupRecipients, resolveOwnerTeamRecipients } = require('./teamRecipients');
+const { resolveFolderContext, applyFolderPolicy } = require('./teamRecipients');
 
 // Configuración
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
@@ -107,23 +107,24 @@ function filterMovementsByDate(causa, targetDate) {
  */
 async function getUsersForCausa(Folder, causaId, includeArchived = true, stats = null) {
   const query = includeArchived ? { causaId } : { causaId, archived: { $ne: true } };
-  const folders = await Folder.find(query).select('userId groupId causaCredentialCovered').lean();
+  const folders = await Folder.find(query).select('userId groupId causaCredentialCovered responsables notificationPolicy').lean();
   const covered = new Set();
   const uncovered = new Set();
   const groupCache = new Map();
   for (const f of folders) {
     const target = f.causaCredentialCovered === false ? uncovered : covered;
     const uid = f.userId?.toString();
-    if (uid) target.add(uid);
-    // Carpeta de equipo: owner + miembros activos, con la cobertura de ESA carpeta.
-    // Con groupId, ese grupo; sin groupId (carpetas anteriores al equipo o creadas por
-    // la sincronización), el equipo activo del dueño («la cuenta del owner es el equipo»).
-    const teamIds = f.groupId
-      ? await resolveGroupRecipients(f.groupId, groupCache)
-      : (uid ? await resolveOwnerTeamRecipients(uid, groupCache) : []);
-    for (const tid of teamIds) {
-      if (tid === uid) continue;
-      if (stats) stats.destinatariosEquipo = (stats.destinatariosEquipo || 0) + 1;
+    // Carpeta de equipo: owner + miembros activos filtrados por las reglas de avisos
+    // (responsables de la carpeta, regla del equipo y modo de cada integrante, 30/10/2026),
+    // con la cobertura de ESA carpeta. Con groupId, ese grupo; sin groupId, el equipo
+    // activo del dueño («la cuenta del owner es el equipo»).
+    const ctx = await resolveFolderContext(f, groupCache);
+    if (!ctx) {
+      if (uid) target.add(uid);
+      continue;
+    }
+    for (const tid of applyFolderPolicy(ctx, f)) {
+      if (tid !== uid && stats) stats.destinatariosEquipo = (stats.destinatariosEquipo || 0) + 1;
       target.add(tid);
     }
   }

@@ -6,6 +6,7 @@ const { sendEmail, sendAdminEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder, PlanBannerSend } = require("../models");
 const policyService = require("./notificationPolicyService");
 const { buildTaskRecipientFilter } = require("./teamRecipients");
+const eventRecipientsSvc = require("./eventRecipients");
 const taskRecipientMarks = require("./taskRecipientMarks");
 const { sendJudicialMovementDigest } = require("./channels/whatsapp");
 const { addNotificationAtomic } = require("./notificationHelper");
@@ -497,81 +498,42 @@ async function sendCalendarNotifications({
         // Importamos ObjectId correctamente
         const ObjectId = mongoose.Types.ObjectId;
 
-        // Búsqueda inicial de eventos en el rango máximo de fechas
+        // Búsqueda inicial de eventos en el rango máximo de fechas.
+        // Equipos (30/10/2026): en un equipo también entran los eventos del owner que le
+        // corresponden a este destinatario por las reglas de la carpeta o por haberlos creado.
+        const eventScope = await eventRecipientsSvc.scopeEventsForRecipient(userId);
         let initialEvents = await Event.find({
-            userId: new ObjectId(userId),
+            ...eventScope.userFilter,
             start: {
                 $gte: today,
                 $lte: futureDate
             }
         }).sort({ start: 1 });
+        initialEvents = await eventRecipientsSvc.keepEventsForRecipient(initialEvents, userId, eventScope.ctx);
 
-        // Ahora filtramos manualmente según la configuración específica de cada evento
+        // Ahora filtramos manualmente según la configuración específica de cada evento.
+        // Configuración y marca «ya avisado» por destinatario (Event.notificationRecipients;
+        // para el dueño del evento valen también sus marcas viejas).
         const upcomingEvents = initialEvents.filter(event => {
-            // Determinar los días de anticipación para este evento específico
-            // Orden de prioridad:
-            // 1. Configuración específica del evento
-            // 2. Configuración global del usuario
-            const eventDaysInAdvance =
-                (event.notificationSettings && typeof event.notificationSettings.daysInAdvance === 'number') ?
-                    event.notificationSettings.daysInAdvance :
-                    globalDaysInAdvance;
+            const settings = eventRecipientsSvc.recipientSettings(event, userId, {
+                ...userCalendarSettings,
+                daysInAdvance: globalDaysInAdvance
+            });
 
-            // Calcular la fecha límite específica para este evento
             const eventFutureDate = new Date(today);
-            eventFutureDate.setDate(today.getDate() + eventDaysInAdvance);
+            eventFutureDate.setDate(today.getDate() + settings.daysInAdvance);
             eventFutureDate.setHours(23, 59, 59, 999);
+            const isInRange = new Date(event.start) <= eventFutureDate;
 
-            // Verificar si el evento está dentro del rango específico
-            const eventDate = new Date(event.start);
+            const shouldNotify = taskRecipientMarks.shouldNotifyRecipient({
+                task: event,
+                userId,
+                channel: 'email',
+                notifyOnceOnly: settings.notifyOnceOnly,
+                forceDaily,
+                todayDateString
+            });
 
-            // El evento debe estar dentro del rango de días configurado
-            const isInRange = eventDate <= eventFutureDate;
-
-            // Verificar si ya fue notificado (según la configuración de notifyOnceOnly)
-            let shouldNotify = true;
-
-            // Determinar si el evento permite múltiples notificaciones
-            const notifyOnceOnly =
-                (event.notificationSettings && typeof event.notificationSettings.notifyOnceOnly === 'boolean') ?
-                    event.notificationSettings.notifyOnceOnly :
-                    userCalendarSettings.notifyOnceOnly;
-
-            // Si está configurado para notificar solo una vez y ya tiene notificaciones por email
-            if (notifyOnceOnly &&
-                event.notifications &&
-                event.notifications.some(n => n.type === 'email')) {
-                shouldNotify = false;
-            }
-
-            // Si permite múltiples notificaciones, verificar si ya se notificó hoy
-            if (shouldNotify &&
-                !notifyOnceOnly &&
-                event.notifications &&
-                event.notifications.some(n =>
-                    n.type === 'email' &&
-                    n.date >= new Date(todayDateString) &&
-                    n.date < new Date(new Date(todayDateString).setDate(new Date(todayDateString).getDate() + 1))
-                )) {
-                shouldNotify = false;
-            }
-
-            // Si estamos forzando notificaciones diarias, ignoramos las verificaciones anteriores
-            if (forceDaily) {
-                shouldNotify = true;
-
-                // Pero aún así verificamos si ya se notificó hoy
-                if (event.notifications &&
-                    event.notifications.some(n =>
-                        n.type === 'email' &&
-                        n.date >= new Date(todayDateString) &&
-                        n.date < new Date(new Date(todayDateString).setDate(new Date(todayDateString).getDate() + 1))
-                    )) {
-                    shouldNotify = false;
-                }
-            }
-
-            // El evento debe estar en el rango y cumplir con las reglas de notificación
             return isInRange && shouldNotify;
         });
 
@@ -666,6 +628,7 @@ async function sendCalendarNotifications({
         await Event.updateMany(
             {
                 _id: { $in: notifiedEventIds },
+                userId: user._id,
                 notificationSettings: { $exists: false }
             },
             {
@@ -687,10 +650,13 @@ async function sendCalendarNotifications({
             { $set: { notifications: [] } }
         );
 
-        // Añadir la notificación a todos los eventos
+        // Marca por destinatario (decide la próxima vez) y marca vieja por compatibilidad.
+        for (const event of upcomingEvents) {
+            await taskRecipientMarks.markTaskRecipientNotified(Event, event, userId, 'email', { now: notificationDetails.date });
+        }
         await Event.updateMany(
             { _id: { $in: notifiedEventIds } },
-            { $push: { notifications: notificationDetails } }
+            { $push: { notifications: { ...notificationDetails, userId: user._id } } }
         );
 
         logger.info(`Notificación de calendario enviada a ${user.email} para ${upcomingEvents.length} eventos`);

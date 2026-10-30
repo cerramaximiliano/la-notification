@@ -17,7 +17,7 @@ const mongoose = require('mongoose');
 const logger = require('../config/logger');
 const { calculateNotifyAt } = require('./judicialMovementCoordinator');
 const policyService = require('./notificationPolicyService');
-const { resolveUserTeamRecipients } = require('./teamRecipients');
+const { resolveTeamContextForUser, applyFolderPolicy } = require('./teamRecipients');
 
 const SOURCE_COLLECTION = 'pjn-notifications';
 const BATCH_LIMIT = 500;
@@ -126,7 +126,24 @@ async function coordinateJudicialCedulas(options = {}) {
         // Destinatarios: el dueño de la credencial y, si tiene equipo, el resto
         // de los miembros activos. Una JudicialCedula por destinatario.
         const ownerId = doc.userId.toString();
-        const recipients = await resolveUserTeamRecipients(ownerId, teamCache);
+        // Reglas de avisos del equipo (30/10/2026): si la causa está en una carpeta del
+        // equipo, rigen sus responsables y su regla; sin carpeta, todo el equipo.
+        let recipients = [ownerId];
+        const ctx = await resolveTeamContextForUser(ownerId, teamCache);
+        if (ctx) {
+          let folder = null;
+          try {
+            folder = await mongoose.connection.db.collection('folders').findOne(
+              { causaId: { $in: [expedienteId, ...(mongoose.Types.ObjectId.isValid(expedienteId) ? [new mongoose.Types.ObjectId(expedienteId)] : [])] },
+                $or: [{ groupId: new mongoose.Types.ObjectId(ctx.groupId) }, { userId: new mongoose.Types.ObjectId(ctx.owner) }] },
+              { projection: { responsables: 1, notificationPolicy: 1 } }
+            );
+          } catch (e) {
+            logger.warn(`[CoordinatorCedulas] no se pudo leer la carpeta de ${expedienteId}: ${e.message}`);
+          }
+          recipients = folder ? applyFolderPolicy(ctx, folder) : ctx.recipients;
+          if (!recipients.includes(ownerId) && !folder) recipients.unshift(ownerId);
+        }
 
         for (const recipientId of recipients) {
           const uniqueKey = JudicialCedula.generateUniqueKey(recipientId, doc.sourceId);

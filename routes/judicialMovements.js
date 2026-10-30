@@ -5,7 +5,7 @@ const { JudicialMovement, User, Folder } = require('../models');
 const authMiddleware = require('../middleware/auth');
 const moment = require('moment');
 const policyService = require('../services/notificationPolicyService');
-const { resolveGroupRecipients, resolveOwnerTeamRecipients, buildTeamPairs, teamKeyOf } = require('../services/teamRecipients');
+const { resolveFolderContext, applyFolderPolicy, buildTeamPairs } = require('../services/teamRecipients');
 
 /**
  * Webhook para recibir movimientos judiciales del día
@@ -44,26 +44,22 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     // el owner de la carpeta (Folder.userId). Si la carpeta tiene groupId, el
     // movimiento se replica a los miembros activos del grupo con la cobertura
     // de ESA carpeta. Un find por batch + un lookup por grupo; best-effort.
-    let teamPairs = { extraRecipients: new Map(), folderPairs: new Set(), reservedPairs: new Set(), userIds: [] };
+    let teamPairs = { extraRecipients: new Map(), folderPairs: new Set(), reservedPairs: new Set(), excludedPairs: new Set(), userIds: [] };
     try {
       // Sin groupId también cuenta: las carpetas anteriores al equipo (o creadas por la
       // sincronización) son del owner, y el owner puede tener un equipo activo.
       const teamFolders = await Folder.find(
         { userId: { $in: batchUserIds }, causaId: { $in: batchCausaIds } },
-        { userId: 1, causaId: 1, groupId: 1, causaCredentialCovered: 1 }
+        { userId: 1, causaId: 1, groupId: 1, causaCredentialCovered: 1, responsables: 1, notificationPolicy: 1 }
       ).lean();
       if (teamFolders.length > 0) {
+        // Destinatarios POR CARPETA (30/10/2026): owner + miembros activos filtrados por
+        // las reglas de avisos (responsables, regla del equipo, modo de cada integrante).
         const groupCache = new Map();
         const recipientsByGroup = new Map();
         for (const f of teamFolders) {
-          const key = teamKeyOf(f);
-          if (!key || recipientsByGroup.has(key)) continue;
-          recipientsByGroup.set(
-            key,
-            f.groupId
-              ? await resolveGroupRecipients(f.groupId, groupCache)
-              : await resolveOwnerTeamRecipients(String(f.userId), groupCache)
-          );
+          const ctx = await resolveFolderContext(f, groupCache);
+          if (ctx) recipientsByGroup.set(`f:${String(f._id)}`, applyFolderPolicy(ctx, f));
         }
         teamPairs = buildTeamPairs(teamFolders, recipientsByGroup);
         if (teamPairs.userIds.length > 0) {
@@ -205,6 +201,12 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         const targets = [String(ownerUserId), ...extraTargets];
 
         for (const userId of targets) {
+          // Reglas de avisos del equipo: el dueño del payload puede quedar afuera (p. ej.
+          // carpeta con responsables donde él no está y modo «según la carpeta»).
+          if (userId === String(ownerUserId) && teamPairs.excludedPairs && teamPairs.excludedPairs.has(`${userId}|${expediente.id}`)) {
+            results.skippedPolicy = (results.skippedPolicy || 0) + 1;
+            continue;
+          }
           if (userId !== String(ownerUserId)) results.destinatariosEquipo++;
           if (deactivatedUserIds.has(userId)) {
             results.skippedDeactivated++;
