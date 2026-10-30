@@ -286,15 +286,22 @@ function applyFolderPolicy(ctx, folder) {
 }
 
 /**
- * Destinatarios de un evento de calendario dentro de un equipo (30/10/2026). Función pura.
- * Ligado a una carpeta del equipo → regla de la carpeta. Sin carpeta → quien lo creó
- * (createdBy, o el dueño del evento); si ya no es integrante, el owner.
+ * Destinatarios de un evento de calendario dentro de un equipo (criterio del 30/10/2026).
+ * Función pura.
+ *  - Personal («Solo para mí», o sin creador ni carpeta: agenda previa del owner) → quien lo
+ *    creó (o el owner).
+ *  - Ligado a una carpeta del equipo → sus responsables (sin responsables vigentes, todos),
+ *    con los modos de cada integrante y la visibilidad («todo» siempre recibe; quien ve solo
+ *    lo suyo, solo si es responsable).
+ *  - Del equipo sin carpeta → todos los integrantes.
  */
 function eventRecipients(ctx, event, folder) {
   if (!ctx) return event && event.userId ? [String(event.userId)] : [];
-  if (folder) return applyFolderPolicy(ctx, folder);
   const creator = event && (event.createdBy || event.userId) ? String(event.createdBy || event.userId) : null;
-  return creator && (ctx.recipients || []).includes(creator) ? [creator] : [ctx.owner];
+  const personal = !!event && (event.personal === true || (!event.createdBy && !event.folderId));
+  if (personal) return creator && (ctx.recipients || []).includes(creator) ? [creator] : [ctx.owner];
+  if (folder) return applyFolderPolicy(ctx, { ...folder, notificationPolicy: 'responsables' });
+  return (ctx.recipients || []).length ? [...ctx.recipients] : [ctx.owner];
 }
 
 // Instancia por defecto sobre la conexión real (resuelta en forma perezosa,

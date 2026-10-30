@@ -50,12 +50,14 @@ async function test(name, fn) {
     const ctx = grupo({ members: [{ userId: O, mode: 'solo_lo_mio' }, { userId: A, mode: 'solo_lo_mio' }, { userId: B, mode: 'solo_lo_mio' }] });
     assert.deepStrictEqual(applyFolderPolicy(ctx, {}), [S(O)]);
   });
-  await test('7. eventos: con carpeta, su regla; sin carpeta, quien lo creó; creador fuera del equipo → owner', () => {
+  await test('7. eventos: carpeta → responsables (sin responsables, todos); sin carpeta → todos; personal o viejo → su creador', () => {
     const ctx = grupo({});
-    assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: A }, { notificationPolicy: 'responsables', responsables: [B] }), [S(B)]);
-    assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: A }, null), [S(A)]);
-    assert.deepStrictEqual(eventRecipients(ctx, { userId: O }, null), [S(O)]);
-    assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: C }, null), [S(O)]);
+    assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: A }, { notificationPolicy: 'todos', responsables: [B] }), [S(B)], 'manda la carpeta aunque su regla sea «todos»');
+    assert.deepStrictEqual(sorted(eventRecipients(ctx, { userId: O, createdBy: A }, { responsables: [] })), sorted([S(O), S(A), S(B)]));
+    assert.deepStrictEqual(sorted(eventRecipients(ctx, { userId: O, createdBy: A }, null)), sorted([S(O), S(A), S(B)]));
+    assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: A, personal: true }, null), [S(A)]);
+    assert.deepStrictEqual(eventRecipients(ctx, { userId: O }, null), [S(O)], 'sin creador ni carpeta: agenda previa del owner');
+    assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: C, personal: true }, null), [S(O)], 'creador fuera del equipo');
     assert.deepStrictEqual(eventRecipients(null, { userId: X }, null), [S(X)]);
   });
   await test('8. webhook: destinatarios por carpeta y owner excluido solo si lo excluyen todas sus carpetas', () => {
@@ -75,24 +77,25 @@ async function test(name, fn) {
     assert.deepStrictEqual(r.extraRecipients.get(`${S(O)}|c`), [S(A)]);
     assert.strictEqual(r.excludedPairs.size, 0);
   });
-  await test('10. eventos de un destinatario: propios + los del owner que le tocan', async () => {
+  await test('10. eventos de un destinatario: los de sus carpetas, los del equipo sin carpeta y sus personales', async () => {
     const ctx = grupo({});
     ctx.groupId = S(id());
-    const folderResp = { _id: id(), userId: O, groupId: ctx.groupId, notificationPolicy: 'responsables', responsables: [B] };
-    const folderTodos = { _id: id(), userId: O };
+    const folderResp = { _id: id(), userId: O, groupId: ctx.groupId, responsables: [B] };
+    const folderSin = { _id: id(), userId: O };
     const evs = [
-      { _id: 1, userId: O, folderId: S(folderResp._id) },        // solo B
-      { _id: 2, userId: O, folderId: S(folderTodos._id) },       // todos
-      { _id: 3, userId: O, createdBy: A },                       // sin carpeta, creado por A
-      { _id: 4, userId: O },                                     // sin carpeta, del owner
-      { _id: 5, userId: X }                                      // de otro usuario
+      { _id: 1, userId: O, createdBy: O, folderId: S(folderResp._id) },  // solo B
+      { _id: 2, userId: O, createdBy: O, folderId: S(folderSin._id) },   // carpeta sin responsables → todos
+      { _id: 3, userId: O, createdBy: A },                               // del equipo sin carpeta → todos
+      { _id: 4, userId: O },                                             // agenda previa del owner → owner
+      { _id: 5, userId: O, createdBy: A, personal: true },               // personal de A
+      { _id: 6, userId: X }                                              // de otro usuario
     ];
-    const load = async () => [folderResp, folderTodos];
+    const load = async () => [folderResp, folderSin];
     const ids = async (u) => (await keepEventsForRecipient(evs, u, ctx, load)).map((e) => e._id);
-    assert.deepStrictEqual(await ids(S(A)), [2, 3]);
-    assert.deepStrictEqual(await ids(S(B)), [1, 2]);
-    assert.deepStrictEqual(await ids(S(O)), [2, 4]);
-    assert.deepStrictEqual((await keepEventsForRecipient(evs, S(X), null, load)).length, 5, 'sin equipo no filtra (la consulta ya es por usuario)');
+    assert.deepStrictEqual(await ids(S(A)), [2, 3, 5]);
+    assert.deepStrictEqual(await ids(S(B)), [1, 2, 3]);
+    assert.deepStrictEqual(await ids(S(O)), [2, 3, 4]);
+    assert.deepStrictEqual((await keepEventsForRecipient(evs, S(X), null, load)).length, 6, 'sin equipo no filtra (la consulta ya es por usuario)');
   });
   await test('11. configuración del evento: dueño la del evento, el resto la propia', () => {
     const ev = { userId: O, notificationSettings: { notifyOnceOnly: true, daysInAdvance: 2 } };
