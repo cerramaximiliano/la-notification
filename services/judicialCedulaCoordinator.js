@@ -136,7 +136,7 @@ async function coordinateJudicialCedulas(options = {}) {
             folder = await mongoose.connection.db.collection('folders').findOne(
               { causaId: { $in: [expedienteId, ...(mongoose.Types.ObjectId.isValid(expedienteId) ? [new mongoose.Types.ObjectId(expedienteId)] : [])] },
                 $or: [{ groupId: new mongoose.Types.ObjectId(ctx.groupId) }, { userId: new mongoose.Types.ObjectId(ctx.owner) }] },
-              { projection: { responsables: 1, notificationPolicy: 1 } }
+              { projection: { responsables: 1, notificationPolicy: 1, createdBy: 1 } }
             );
           } catch (e) {
             logger.warn(`[CoordinatorCedulas] no se pudo leer la carpeta de ${expedienteId}: ${e.message}`);

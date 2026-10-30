@@ -107,7 +107,7 @@ function filterMovementsByDate(causa, targetDate) {
  */
 async function getUsersForCausa(Folder, causaId, includeArchived = true, stats = null) {
   const query = includeArchived ? { causaId } : { causaId, archived: { $ne: true } };
-  const folders = await Folder.find(query).select('userId groupId causaCredentialCovered responsables notificationPolicy').lean();
+  const folders = await Folder.find(query).select('userId groupId causaCredentialCovered responsables notificationPolicy createdBy').lean();
   const covered = new Set();
   const uncovered = new Set();
   const groupCache = new Map();

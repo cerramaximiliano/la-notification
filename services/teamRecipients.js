@@ -179,7 +179,7 @@ function createTeamRecipients(db) {
       if (database) {
         const g = await database.collection(GROUPS_COLLECTION).findOne(
           { status: 'active', ...filter },
-          { projection: { owner: 1, members: 1, 'settings.notifications': 1 } }
+          { projection: { owner: 1, members: 1, 'settings.notifications': 1, 'settings.visibility': 1 } }
         );
         if (g) ctx = contextFromGroupDoc(g);
       }
@@ -223,7 +223,17 @@ function createTeamRecipients(db) {
 /** Contexto a partir del doc crudo de `groups`. Función pura. */
 function contextFromGroupDoc(group) {
   const n = (group.settings && group.settings.notifications) || {};
+  // Visibilidad (30/10/2026): integrantes que solo ven lo suyo (no aplica a owner ni admins).
+  const v = (group.settings && group.settings.visibility) || {};
+  const overrides = new Map((Array.isArray(v.members) ? v.members : []).filter((m) => m && m.userId).map((m) => [String(m.userId), m.mode]));
+  const soloPropio = new Set();
+  for (const m of Array.isArray(group.members) ? group.members : []) {
+    if (!m || m.status !== 'active' || !m.userId || m.role === 'admin') continue;
+    const mode = overrides.get(String(m.userId)) || (v.defaultMode === 'propio' ? 'propio' : 'todo');
+    if (mode === 'propio') soloPropio.add(String(m.userId));
+  }
   return {
+    soloPropio,
     groupId: String(group._id),
     owner: String(group.owner),
     recipients: recipientsFromGroupDoc(group),
@@ -263,7 +273,10 @@ function applyFolderPolicy(ctx, folder) {
   const policy = fp === 'responsables' || fp === 'todos' ? fp : (ctx.settings && ctx.settings.defaultPolicy) || 'todos';
   const folderWants = (uid) => policy === 'todos' || responsables.size === 0 || responsables.has(uid);
   const modes = (ctx.settings && ctx.settings.members) || new Map();
+  const creador = folder && folder.createdBy ? String(folder.createdBy) : null;
   const out = members.filter((uid) => {
+    // Quien solo ve lo suyo no recibe avisos de carpetas que no ve (30/10/2026).
+    if (ctx.soloPropio && ctx.soloPropio.has(uid) && !responsables.has(uid) && uid !== creador) return false;
     const mode = modes.get(uid) || 'segun_carpeta';
     if (mode === 'todo') return true;
     if (mode === 'solo_lo_mio') return responsables.has(uid);

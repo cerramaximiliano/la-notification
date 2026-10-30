@@ -50,7 +50,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       // sincronización) son del owner, y el owner puede tener un equipo activo.
       const teamFolders = await Folder.find(
         { userId: { $in: batchUserIds }, causaId: { $in: batchCausaIds } },
-        { userId: 1, causaId: 1, groupId: 1, causaCredentialCovered: 1, responsables: 1, notificationPolicy: 1 }
+        { userId: 1, causaId: 1, groupId: 1, causaCredentialCovered: 1, responsables: 1, notificationPolicy: 1, createdBy: 1 }
       ).lean();
       if (teamFolders.length > 0) {
         // Destinatarios POR CARPETA (30/10/2026): owner + miembros activos filtrados por

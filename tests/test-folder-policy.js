@@ -99,6 +99,21 @@ async function test(name, fn) {
     assert.deepStrictEqual(recipientSettings(ev, S(O), { notifyOnceOnly: false, daysInAdvance: 7 }), { notifyOnceOnly: true, daysInAdvance: 2 });
     assert.deepStrictEqual(recipientSettings(ev, S(A), { notifyOnceOnly: false, daysInAdvance: 7 }), { notifyOnceOnly: false, daysInAdvance: 7 });
   });
+  await test('12. visibilidad «solo lo suyo»: no recibe avisos de carpetas ajenas aunque la regla sea «todos»', () => {
+    const ctx = contextFromGroupDoc({
+      _id: id(), owner: O,
+      members: [{ userId: A, status: 'active', role: 'editor' }, { userId: B, status: 'active', role: 'admin' }],
+      settings: { notifications: { defaultPolicy: 'todos' }, visibility: { defaultMode: 'propio' } }
+    });
+    assert.deepStrictEqual(sorted(applyFolderPolicy(ctx, {})), sorted([S(O), S(B)]), 'A (editor, propio) afuera; B admin siempre');
+    assert.deepStrictEqual(sorted(applyFolderPolicy(ctx, { responsables: [A] })), sorted([S(O), S(A), S(B)]));
+    assert.deepStrictEqual(sorted(applyFolderPolicy(ctx, { createdBy: A })), sorted([S(O), S(A), S(B)]), 'la creó');
+    const ctx2 = contextFromGroupDoc({
+      _id: id(), owner: O, members: [{ userId: A, status: 'active', role: 'editor' }],
+      settings: { visibility: { defaultMode: 'propio', members: [{ userId: A, mode: 'todo' }] } }
+    });
+    assert.deepStrictEqual(sorted(applyFolderPolicy(ctx2, {})), sorted([S(O), S(A)]), 'excepción «todo»');
+  });
   console.log(`\n${ok} ok, ${fail} fallidas`);
   process.exit(fail ? 1 : 0);
 })();

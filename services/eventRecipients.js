@@ -53,7 +53,7 @@ async function keepEventsForRecipient(events, userId, ctx, loadFolders) {
         ? await loadFolders(folderIds)
         : await mongoose.connection.db.collection('folders').find(
           { _id: { $in: folderIds.map(toObjectId).filter(Boolean) } },
-          { projection: { userId: 1, groupId: 1, responsables: 1, notificationPolicy: 1 } }
+          { projection: { userId: 1, groupId: 1, responsables: 1, notificationPolicy: 1, createdBy: 1 } }
         ).toArray();
     } catch (error) {
       logger.warn(`[EventRecipients] no se pudieron leer las carpetas: ${error.message}`);
