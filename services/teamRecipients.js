@@ -298,7 +298,7 @@ function applyFolderPolicy(ctx, folder) {
 function eventRecipients(ctx, event, folder) {
   if (!ctx) return event && event.userId ? [String(event.userId)] : [];
   const creator = event && (event.createdBy || event.userId) ? String(event.createdBy || event.userId) : null;
-  const personal = !!event && (event.personal === true || (!event.createdBy && !event.folderId));
+  const personal = !!event && (event.personal === true || (event.personal !== false && !event.createdBy && !event.folderId));
   if (personal) return creator && (ctx.recipients || []).includes(creator) ? [creator] : [ctx.owner];
   if (folder) return applyFolderPolicy(ctx, { ...folder, notificationPolicy: 'responsables' });
   return (ctx.recipients || []).length ? [...ctx.recipients] : [ctx.owner];

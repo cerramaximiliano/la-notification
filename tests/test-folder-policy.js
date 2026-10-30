@@ -57,6 +57,7 @@ async function test(name, fn) {
     assert.deepStrictEqual(sorted(eventRecipients(ctx, { userId: O, createdBy: A }, null)), sorted([S(O), S(A), S(B)]));
     assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: A, personal: true }, null), [S(A)]);
     assert.deepStrictEqual(eventRecipients(ctx, { userId: O }, null), [S(O)], 'sin creador ni carpeta: agenda previa del owner');
+    assert.deepStrictEqual(sorted(eventRecipients(ctx, { userId: O, personal: false }, null)), sorted([S(O), S(A), S(B)]), 'evento viejo desmarcado: del equipo');
     assert.deepStrictEqual(eventRecipients(ctx, { userId: O, createdBy: C, personal: true }, null), [S(O)], 'creador fuera del equipo');
     assert.deepStrictEqual(eventRecipients(null, { userId: X }, null), [S(X)]);
   });

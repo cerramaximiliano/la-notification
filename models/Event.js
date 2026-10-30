@@ -100,7 +100,6 @@ const EventSchema = new Schema(
     // «Solo para mí» (30/10/2026): avisa solo a quien lo creó.
     personal: {
       type: Boolean,
-      default: false,
     },
     notificationRecipients: {
       type: [new Schema({
