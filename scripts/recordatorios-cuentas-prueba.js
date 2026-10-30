@@ -23,7 +23,10 @@ const { sendCalendarBrowserAlerts, sendTaskBrowserAlerts } = require('../service
   }
   await mongoose.connect(process.env.URLDB);
   const users = await User.find({ email: { $in: emails } });
-  const noPrueba = users.filter((u) => u.isTestAccount !== true);
+  // isTestAccount no está en el schema local: se lee de la colección cruda.
+  const raw = await mongoose.connection.db.collection(User.collection.name)
+    .find({ _id: { $in: users.map((u) => u._id) } }, { projection: { isTestAccount: 1 } }).toArray();
+  const noPrueba = raw.filter((u) => u.isTestAccount !== true);
   if (users.length !== emails.length || noPrueba.length > 0) {
     console.log(`Abortado: ${emails.length - users.length} sin encontrar, ${noPrueba.length} no son cuentas de prueba`);
     await mongoose.disconnect();
