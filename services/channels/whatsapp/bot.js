@@ -173,6 +173,7 @@ async function buscar(userId, query) {
   const re = new RegExp(escapeRegex(q), 'i');
   const folders = await Folder.find({
     userId,
+    deletedAt: null, // papelera (2/11/2026)
     $or: [{ folderName: re }, { numberJudFolder: re }],
   }).select('folderName causaId numberJudFolder archived').limit(6).lean();
 

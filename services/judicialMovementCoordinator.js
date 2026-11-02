@@ -10,6 +10,7 @@ const moment = require('moment-timezone');
 const logger = require('../config/logger');
 const policyService = require('./notificationPolicyService');
 const { resolveFolderContext, applyFolderPolicy } = require('./teamRecipients');
+const { NOT_TRASHED } = require('./trashedFolders');
 
 // Configuración
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
@@ -106,7 +107,8 @@ function filterMovementsByDate(causa, targetDate) {
  * suma en stats.destinatariosEquipo los userIds agregados por equipo.
  */
 async function getUsersForCausa(Folder, causaId, includeArchived = true, stats = null) {
-  const query = includeArchived ? { causaId } : { causaId, archived: { $ne: true } };
+  // Papelera (2/11/2026): una carpeta con deletedAt no es destinataria de nada.
+  const query = includeArchived ? { causaId, ...NOT_TRASHED } : { causaId, archived: { $ne: true }, ...NOT_TRASHED };
   const folders = await Folder.find(query).select('userId groupId causaCredentialCovered responsables notificationPolicy createdBy').lean();
   const covered = new Set();
   const uncovered = new Set();
