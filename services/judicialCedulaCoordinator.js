@@ -18,6 +18,7 @@ const logger = require('../config/logger');
 const { calculateNotifyAt } = require('./judicialMovementCoordinator');
 const policyService = require('./notificationPolicyService');
 const { resolveTeamContextForUser, applyFolderPolicy } = require('./teamRecipients');
+const { isTrashed } = require('./trashedFolders');
 
 const SOURCE_COLLECTION = 'pjn-notifications';
 const BATCH_LIMIT = 500;
@@ -130,17 +131,26 @@ async function coordinateJudicialCedulas(options = {}) {
         // equipo, rigen sus responsables y su regla; sin carpeta, todo el equipo.
         let recipients = [ownerId];
         const ctx = await resolveTeamContextForUser(ownerId, teamCache);
+        // Carpeta de la causa (del equipo o del propio usuario): decide los destinatarios y, si está en la
+        // papelera (2/11/2026), que no se avise a nadie.
+        const causaIds = [expedienteId, ...(mongoose.Types.ObjectId.isValid(expedienteId) ? [new mongoose.Types.ObjectId(expedienteId)] : [])];
+        const dueños = ctx
+          ? [{ groupId: new mongoose.Types.ObjectId(ctx.groupId) }, { userId: new mongoose.Types.ObjectId(ctx.owner) }]
+          : [{ userId: new mongoose.Types.ObjectId(ownerId) }];
+        let folder = null;
+        try {
+          folder = await mongoose.connection.db.collection('folders').findOne(
+            { causaId: { $in: causaIds }, $or: dueños },
+            { projection: { responsables: 1, notificationPolicy: 1, createdBy: 1, deletedAt: 1 } }
+          );
+        } catch (e) {
+          logger.warn(`[CoordinatorCedulas] no se pudo leer la carpeta de ${expedienteId}: ${e.message}`);
+        }
+        if (isTrashed(folder)) {
+          stats.cedulasSinAvisoPapelera = (stats.cedulasSinAvisoPapelera || 0) + 1;
+          continue;
+        }
         if (ctx) {
-          let folder = null;
-          try {
-            folder = await mongoose.connection.db.collection('folders').findOne(
-              { causaId: { $in: [expedienteId, ...(mongoose.Types.ObjectId.isValid(expedienteId) ? [new mongoose.Types.ObjectId(expedienteId)] : [])] },
-                $or: [{ groupId: new mongoose.Types.ObjectId(ctx.groupId) }, { userId: new mongoose.Types.ObjectId(ctx.owner) }] },
-              { projection: { responsables: 1, notificationPolicy: 1, createdBy: 1 } }
-            );
-          } catch (e) {
-            logger.warn(`[CoordinatorCedulas] no se pudo leer la carpeta de ${expedienteId}: ${e.message}`);
-          }
           recipients = folder ? applyFolderPolicy(ctx, folder) : ctx.recipients;
           if (!recipients.includes(ownerId) && !folder) recipients.unshift(ownerId);
         }

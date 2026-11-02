@@ -179,6 +179,15 @@ const FolderSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    // Papelera (2/11/2026): la carpeta sigue vinculada y actualizándose, pero no recibe avisos.
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+    deletedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
     currentPhase: {
       type: String,
       enum: ["prejudicial", "judicial", null],

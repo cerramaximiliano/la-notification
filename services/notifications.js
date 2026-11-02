@@ -6,6 +6,7 @@ const { sendEmail, sendAdminEmail } = require("./email");
 const { User, Event, Task, Movement, Alert, NotificationLog, JudicialMovement, EmailTemplate, Folder, PlanBannerSend } = require("../models");
 const policyService = require("./notificationPolicyService");
 const { buildTaskRecipientFilter } = require("./teamRecipients");
+const { NOT_TRASHED, isTrashed, dropItemsOfTrashedFolders } = require('./trashedFolders');
 const eventRecipientsSvc = require("./eventRecipients");
 const taskRecipientMarks = require("./taskRecipientMarks");
 const { sendJudicialMovementDigest } = require("./channels/whatsapp");
@@ -509,6 +510,8 @@ async function sendCalendarNotifications({
                 $lte: futureDate
             }
         }).sort({ start: 1 });
+        // Papelera (2/11/2026): los eventos de carpetas en la papelera no se recuerdan.
+        initialEvents = await dropItemsOfTrashedFolders(initialEvents, Folder);
         initialEvents = await eventRecipientsSvc.keepEventsForRecipient(initialEvents, userId, eventScope.ctx);
 
         // Ahora filtramos manualmente según la configuración específica de cada evento.
@@ -792,6 +795,8 @@ async function sendTaskNotifications({
                 $lte: maxFutureDate
             }
         }).sort({ dueDate: 1 });
+        // Papelera (2/11/2026): las tareas de carpetas en la papelera no se recuerdan.
+        initialTasks = await dropItemsOfTrashedFolders(initialTasks, Folder);
 
         // Ahora filtramos manualmente según la configuración específica de cada tarea.
         // Configuración y marca «ya avisada» son por DESTINATARIO (el usuario que se
@@ -1329,10 +1334,10 @@ async function sendJudicialMovementNotifications({
             }
             for (const causaId of causaIds) {
                 try {
-                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered').lean();
+                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered deletedAt').lean();
                     if (!folder && teamScope) {
                         folder = await Folder.findOne({ causaId, $or: [{ groupId: teamScope._id }, { userId: teamScope.owner }] })
-                            .select('_id archived folderName causaCredentialCovered').lean();
+                            .select('_id archived folderName causaCredentialCovered deletedAt').lean();
                     }
                     if (folder) folderByCausa[causaId] = folder;
                 } catch (folderErr) {
@@ -1379,6 +1384,11 @@ async function sendJudicialMovementNotifications({
                 // Las cédulas y las otras fuentes no cambian.
                 if (source === 'pjn' && folder && folder.causaCredentialCovered === false) {
                     toSkip.push({ movement, reason: 'Causa reservada: credencial sin cobertura' });
+                    continue;
+                }
+                // Papelera (2/11/2026): la carpeta sigue actualizándose pero no avisa.
+                if (isTrashed(folder)) {
+                    toSkip.push({ movement, reason: 'Carpeta en la papelera: sin avisos' });
                     continue;
                 }
                 if (policy.notifyArchivedFolders === false && folder && folder.archived === true) {
@@ -2021,6 +2031,7 @@ async function sendFolderInactivityNotifications({
         const folders = await Folder.find({
             userId: userId,
             archived: false,
+            ...NOT_TRASHED,
             status: { $ne: 'Cerrada' }
         });
 
