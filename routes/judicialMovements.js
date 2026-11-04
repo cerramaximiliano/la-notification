@@ -32,6 +32,7 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
       skippedDeactivated: 0,
       skippedReserved: 0,
       skippedSinCarpeta: 0,
+      skippedOld: 0,
       destinatariosEquipo: 0,
       duplicates: 0,
       errors: []
@@ -148,6 +149,8 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
     // la próxima corrida (mismo día, hora razonable); y en día no activo se
     // espera al próximo día activo.
     const now = new Date();
+    // Política por jurisdicción para la edad máxima (movementPolicies.maxAgeDays).
+    const policyCfg = await policyService.getConfigCached();
     if (notifyAt < now) {
       const config = await policyService.getConfigCached();
       const recalculado = policyService.getDeliveryNotifyAt(config, now);
@@ -192,6 +195,16 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
           fechaNormalizada = fechaObj.toISOString().split('T')[0];
         } catch (dateError) {
           throw new Error(`Error al procesar fecha: ${dateError.message}`);
+        }
+
+        // Movimiento más viejo que la edad máxima de la política: no es una
+        // novedad para nadie (atraso de una causa recién vinculada o que el
+        // sistema no actualizó por semanas). Se descarta antes de crear el
+        // pending, para cualquier fuente y cualquier destinatario.
+        const agePolicy = policyService.resolvePolicy(policyCfg, movement.source || 'pjn');
+        if (policyService.exceedsMaxAge(movimiento.fecha, agePolicy, now)) {
+          results.skippedOld++;
+          continue;
         }
 
         // Destinatarios: el owner del payload y, si la carpeta es de equipo,

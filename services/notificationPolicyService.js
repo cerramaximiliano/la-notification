@@ -30,7 +30,12 @@ const BASE_POLICY = {
   notifyArchivedFolders: true,
   activeDays: null, // null → usar notificationSchedule.activeDays global
   offDayMode: 'skip',
-  filters: null // null → usar filters globales
+  filters: null, // null → usar filters globales
+  // Edad máxima (días) de un movimiento para avisarlo: el webhook descarta lo
+  // más viejo. Es la red central contra el "atraso notificado como novedad"
+  // (4/11/2026: 21 movimientos de 2022–2026 de una causa vinculada ese día a
+  // una credencial nueva). null/0 → sin límite.
+  maxAgeDays: 3
 };
 
 let cache = { config: null, loadedAt: 0 };
@@ -103,6 +108,21 @@ function resolvePolicy(config, source) {
     policy = mergePolicy(policy, mp.sources[source]);
   }
   return policy;
+}
+
+/**
+ * ¿El movimiento es más viejo que policy.maxAgeDays? Compara por día
+ * calendario en UTC: las fechas del portal vienen como fecha sin hora
+ * (medianoche UTC) y pasarlas a la timezone local las correría un día.
+ * @param {Date|string} fecha - fecha del movimiento
+ */
+function exceedsMaxAge(fecha, policy, now = new Date()) {
+  const max = policy && Number(policy.maxAgeDays);
+  if (!max || max <= 0) return false;
+  const f = moment.utc(fecha);
+  if (!f.isValid()) return false;
+  const diffDays = moment.utc(now).startOf('day').diff(f.startOf('day'), 'days');
+  return diffDays > max;
 }
 
 /**
@@ -241,6 +261,7 @@ module.exports = {
   isGloballyEnabled,
   isWhatsappEnabled,
   resolvePolicy,
+  exceedsMaxAge,
   isActiveDay,
   passesContentFilters,
   getScheduledNotifyAt,
