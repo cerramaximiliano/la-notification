@@ -214,6 +214,72 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
             <a href="{{folderUrl}}" style="font-size:13px;font-weight:600;color:#3A7BFF;text-decoration:none;">Ver causa completa en Law Analytics&nbsp;&#8594;</a>
           </td></tr>`;
 
+  // Formato LISTADO (options.compact): con muchos movimientos el correo no lista cada uno; va una
+  // fila por causa con cuántos movimientos tuvo, de qué tipos y el link a la carpeta. Los
+  // vencimientos de cédulas se mantienen (son accionables). Lo decide el caller por umbral
+  // (config.digestCompact). Caso que lo motivó: sincronización inicial de una credencial de 4.400
+  // causas, decenas de movimientos del día en el primer resumen (5/11/2026).
+  if (options.compact === true) {
+    const filaCompactaTemplate = `
+          <tr><td style="background-color:#F8FAFC;padding:0 18px 12px 18px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;">
+              <tr><td style="padding:10px 14px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td style="font-size:13px;font-weight:600;color:#0F172A;">{{resumen}}</td>
+                  <td align="right" style="font-size:12px;white-space:nowrap;">{{ctaHtml}}</td>
+                </tr></table>
+                <p style="margin:4px 0 0 0;font-size:12px;line-height:1.5;color:#64748B;">{{tipos}}</p>{{plazosHtml}}
+              </td></tr>
+            </table>
+          </td></tr>`;
+    let totalMovs = 0;
+    for (const [key, data] of Object.entries(movementsByExpediente)) {
+      const { expediente, movements } = data;
+      totalMovs += movements.length;
+      const conteoTipos = {};
+      for (const m of movements) { const t = (m.movimiento.tipo || 'Movimiento').trim(); conteoTipos[t] = (conteoTipos[t] || 0) + 1; }
+      const tiposOrdenados = Object.entries(conteoTipos).sort((a, b) => b[1] - a[1]);
+      const tiposTxt = tiposOrdenados.slice(0, 4).map(([t, n]) => (n > 1 ? `${t} (${n})` : t)).join(' · ') + (tiposOrdenados.length > 4 ? ` · y ${tiposOrdenados.length - 4} tipo(s) más` : '');
+      // La fecha del movimiento es un día (medianoche UTC): formatear en UTC, no en la zona del server.
+      const fechas = [...new Set(movements.map((m) => moment.utc(m.movimiento.fecha).format('DD/MM/YYYY')))];
+      const resumen = `${movements.length} movimiento${movements.length === 1 ? '' : 's'}${fechas.length === 1 ? ` del ${fechas[0]}` : ''}`;
+      const plazos = movements.map((m) => plazoDeMovimiento(m)).filter((p) => p.html);
+      const folderId = folderIdByExpediente[key];
+      const folderUrl = folderId ? `${frontBaseUrl}/apps/folders/details/${folderId}` : null;
+      const ctaHtml = folderUrl ? `<a href="${folderUrl}" style="font-weight:600;color:#3A7BFF;text-decoration:none;">Ver causa&nbsp;&#8594;</a>` : '';
+      const numberYear = expedienteLabel(expediente);
+      const folderInfo = folderInfoByExpediente[key];
+      expedientesHtml += processTemplate(expedienteTemplate, {
+        number: expediente.number,
+        year: expediente.year,
+        numberYear,
+        fuero: esc(expediente.fuero),
+        caratula: esc(expediente.caratula),
+        folderChipHtml: folderChip(folderInfo),
+        movimientosRows: processTemplate(filaCompactaTemplate, { resumen: esc(resumen), tipos: esc(tiposTxt), ctaHtml, plazosHtml: plazos.map((p) => p.html).join('') }),
+        folderCtaHtml: '',
+      });
+      const folderStateText = folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '';
+      expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}${folderStateText}\n`;
+      expedientesText += `Carátula: ${expediente.caratula}\n`;
+      expedientesText += `${resumen}: ${tiposTxt}\n`;
+      for (const p of plazos) expedientesText += p.text;
+      if (folderUrl) expedientesText += `Ver causa: ${folderUrl}\n`;
+    }
+    const tituloListado = `${options.sectionTitle || 'Movimientos nuevos'} · ${totalMovs} en ${Object.keys(movementsByExpediente).length} causas`;
+    if (expedientesHtml) expedientesHtml = processTemplate(sectionWrapperTemplate, { sectionTitle: esc(tituloListado), segments: expedientesHtml });
+    return {
+      userName: user.name || user.email || 'Usuario',
+      userEmail: user.email,
+      expedientesCount: Object.keys(movementsByExpediente).length,
+      expedientesHtml,
+      expedientesText,
+      trackingPixelHtml: '',
+      compact: true,
+      'process.env.BASE_URL': process.env.BASE_URL || ''
+    };
+  }
+
   // Procesar cada expediente
   for (const [key, data] of Object.entries(movementsByExpediente)) {
     const { expediente, movements } = data;

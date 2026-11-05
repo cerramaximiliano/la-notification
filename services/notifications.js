@@ -1619,6 +1619,22 @@ async function sendJudicialMovementNotifications({
         // este usuario (services/plazosEnCorreo.js). Sin plazo, se notifica igual.
         movementLinkOptions.plazosPorMovimiento = await plazosParaMovimientos(pendingMovements, userId);
 
+        // Formato listado (una fila por causa, sin el detalle de cada movimiento) cuando el resumen
+        // es grande. Umbrales en el config doc: digestCompact { minMovimientos, minCausas }
+        // (default 20 / 10; 0 desactiva ese umbral). Ver templateProcessor (options.compact).
+        try {
+            const cfgDigest = (await policyService.getConfigCached()) || {};
+            const dc = cfgDigest.digestCompact || {};
+            const minMov = Number.isFinite(dc.minMovimientos) ? dc.minMovimientos : 20;
+            const minCausas = Number.isFinite(dc.minCausas) ? dc.minCausas : 10;
+            const totalMovs = Object.values(movementsByExpediente).reduce((a, d) => a + d.movements.length, 0);
+            const totalCausas = Object.keys(movementsByExpediente).length;
+            movementLinkOptions.compact = dc.enabled !== false && ((minMov > 0 && totalMovs > minMov) || (minCausas > 0 && totalCausas > minCausas));
+            if (movementLinkOptions.compact) logger.info(`[digest] usuario ${userId}: formato listado (${totalMovs} movimientos en ${totalCausas} causas; umbral ${minMov}/${minCausas})`);
+        } catch (dcErr) {
+            logger.warn(`[digest] no se pudo evaluar el formato listado: ${dcErr.message}`);
+        }
+
         // Variables de movimientos (slot {{expedientesHtml}}) + cédulas (slot {{cedulasHtml}}).
         const movementVars = processJudicialMovementsData(movementsByExpediente, user, movementLinkOptions);
         const cedulaData = processJudicialCedulasData(cedulasByExpediente);
