@@ -1,5 +1,15 @@
 const express = require('express');
 const router = express.Router();
+
+// Primera sincronización de una credencial (pjn-mis-causas manda firstSync:true): el movimiento
+// espera al resumen del día (notifyAt) aunque el usuario esté en modo inmediato — el filtro del
+// modo inmediato excluye deferred. Así un sync inicial de miles de causas no manda un correo y
+// decenas de alertas cada 15 minutos (5/11/2026): sale todo junto, en formato listado y con una
+// alerta agrupada si es mucho.
+function firstSyncSettings(movement) {
+  return movement && movement.firstSync === true ? { deferred: true, firstSync: true } : {};
+}
+
 const logger = require('../config/logger');
 const { JudicialMovement, User, Folder } = require('../models');
 const authMiddleware = require('../middleware/auth');
@@ -311,7 +321,8 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
             } else {
               existingMovement.notificationSettings = {
                 notifyAt,
-                channels: ['email', 'browser']
+                channels: ['email', 'browser'],
+                ...firstSyncSettings(movement)
               };
               existingMovement.notificationStatus = 'pending';
               existingMovement.notifications = [];
@@ -345,7 +356,8 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
               source: movement.source || 'pjn',
               notificationSettings: {
                 notifyAt,
-                channels: ['email', 'browser']
+                channels: ['email', 'browser'],
+                ...firstSyncSettings(movement)
               },
               uniqueKey,
               notificationStatus: 'pending'

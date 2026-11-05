@@ -75,6 +75,10 @@ const judicialMovementSchema = new mongoose.Schema({
     // true cuando el corte "una notificación por causa y día" lo corrió al próximo
     // slot: el modo inmediato respeta el notifyAt de estos (no los manda a las 00:30)
     deferred: { type: Boolean },
+    // Movimiento de la primera sincronización de una credencial (pjn-mis-causas, vínculo nuevo):
+    // va con deferred=true para que el modo inmediato no lo mande cada 15 minutos mientras dura
+    // el sync inicial; sale en el resumen del día (notifyAt).
+    firstSync: { type: Boolean },
     channels: [{
       type: String,
       enum: ['email', 'browser'],
