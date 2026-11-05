@@ -66,13 +66,16 @@ function routeForAlert(alert) {
   const folderId = alert.folderId ? String(alert.folderId) : null;
   switch (alert.sourceType) {
     case 'movement':
-      return folderId ? `/apps/folders/details/${folderId}` : '/alerts';
+      // Sin carpeta = alerta agrupada ("N movimientos en M causas"): el inicio de la app tiene la
+      // sección Novedades con las carpetas con movimientos sin ver.
+      return folderId ? `/apps/folders/details/${folderId}` : '/';
     case 'event':
       return '/apps/calendar';
     case 'task':
       return '/tareas';
     default:
-      return '/alerts';
+      // La app usa /alertas ('/alerts' no existe y caía al inicio por la ruta comodín).
+      return '/alertas';
   }
 }
 

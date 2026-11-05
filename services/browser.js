@@ -689,6 +689,62 @@ async function sendJudicialMovementBrowserAlerts({
         }
 
         let alertsCreated = 0;
+
+        // Muchas causas a la vez (p.ej. la sincronización inicial de una credencial grande): UNA
+        // alerta agrupada "N movimientos nuevos / en M causas" en vez de una por causa. Sin carpeta
+        // ni movimiento de referencia: el front la lleva al listado de carpetas filtrado por
+        // movimientos de hoy y la app (push) al inicio, sección Novedades. Umbral en el config doc
+        // (digestCompact.alertMinCausas, default 5; 0 desactiva). 5/11/2026.
+        let alertMinCausas = 5;
+        try {
+            const policyService = require('./notificationPolicyService');
+            const cfg = (await policyService.getConfigCached()) || {};
+            const dc = cfg.digestCompact || {};
+            if (dc.enabled === false) alertMinCausas = 0;
+            else if (Number.isFinite(dc.alertMinCausas)) alertMinCausas = dc.alertMinCausas;
+        } catch (cfgErr) {
+            logger.warn(`No se pudo leer digestCompact para alertas: ${cfgErr.message}`);
+        }
+        if (alertMinCausas > 0 && groups.size > alertMinCausas) {
+            const totalMovs = upcomingMovements.length;
+            const latest = upcomingMovements[upcomingMovements.length - 1];
+            const fechas = [...new Set(upcomingMovements.map((m) => moment.utc(m.movimiento.fecha).format('DD/MM/YYYY')))];
+            try {
+                const newAlert = await models.Alert.create({
+                    userId: userId,
+                    sourceType: 'movement',
+                    avatarIcon: 'TableDocument',
+                    avatarType: 'icon',
+                    avatarSize: 40,
+                    primaryText: `${totalMovs} movimiento${totalMovs === 1 ? '' : 's'} nuevo${totalMovs === 1 ? '' : 's'}`,
+                    secondaryText: `en ${groups.size} causas · ${fechas.length === 1 ? fechas[0] : `hasta ${moment.utc(latest.movimiento.fecha).format('DD/MM/YYYY')}`}`,
+                    expirationDate: latest.movimiento.fecha,
+                    actionText: 'Ver novedades'
+                });
+                try {
+                    if (websocketService.isUserConnected(userId)) await websocketService.sendPushAlert(userId, newAlert);
+                } catch (wsError) {
+                    logger.error(`Error al enviar la alerta agrupada por WebSocket: ${wsError.message}`);
+                }
+                pushChannel.pushAlert(userId, newAlert);
+                logger.info(`Alerta agrupada para ${userId}: ${totalMovs} movimientos en ${groups.size} causas (umbral ${alertMinCausas})`);
+                return {
+                    success: true,
+                    statusCode: 200,
+                    message: `Alerta agrupada: ${totalMovs} movimiento(s) en ${groups.size} causa(s)`,
+                    count: totalMovs,
+                    alertsCount: 1,
+                    grouped: true,
+                    notified: true,
+                    userId: userId,
+                    movementIds: upcomingMovements.map(m => m._id),
+                    daysInAdvance: globalDaysInAdvance
+                };
+            } catch (groupErr) {
+                logger.error(`No se pudo crear la alerta agrupada (sigue por causa): ${groupErr.message}`);
+            }
+        }
+
         for (const group of groups.values()) {
             // upcomingMovements viene ordenado por fecha ascendente: el último es
             // el más reciente y es el que representa al grupo.
