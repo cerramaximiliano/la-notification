@@ -257,6 +257,8 @@ async function coordinateJudicialMovements(options = {}) {
       // Procesar cada combinación de usuario y movimiento
       for (const userId of userIds) {
         for (const movimiento of movimientosDelDia) {
+          // Detalle vacío → texto de respaldo (mismo que el webhook), antes del uniqueKey.
+          const detalle = JudicialMovement.normalizeDetalle(movimiento.detalle);
           try {
             // Generar uniqueKey
             const uniqueKey = JudicialMovement.generateUniqueKey(
@@ -264,7 +266,7 @@ async function coordinateJudicialMovements(options = {}) {
               causa._id.toString(),
               movimiento.fecha,
               movimiento.tipo,
-              movimiento.detalle
+              detalle
             );
 
             // Verificar si ya existe
@@ -289,7 +291,7 @@ async function coordinateJudicialMovements(options = {}) {
               movimiento: {
                 fecha: new Date(movimiento.fecha),
                 tipo: movimiento.tipo,
-                detalle: movimiento.detalle,
+                detalle,
                 url: movimiento.url,
                 posicionDia: Number.isFinite(movimiento.posicionDia) ? movimiento.posicionDia : undefined
               },
@@ -309,7 +311,7 @@ async function coordinateJudicialMovements(options = {}) {
               stats.notificacionesExistentes++;
             } else {
               stats.errores++;
-              logger.error(`[Coordinator] Error creando notificación: ${error.message}`);
+              logger.error(`[Coordinator] Error creando notificación (causa ${causa._collectionName}/${causa._id}, usuario ${userId}, movimiento ${moment.utc(movimiento.fecha).format('YYYY-MM-DD')} «${movimiento.tipo}»): ${error.message}`);
             }
           }
         }

@@ -108,6 +108,17 @@ const judicialMovementSchema = new mongoose.Schema({
 judicialMovementSchema.index({ userId: 1, 'movimiento.fecha': 1, notificationStatus: 1 });
 judicialMovementSchema.index({ 'notificationSettings.notifyAt': 1, notificationStatus: 1 });
 
+// Texto de respaldo para movimientos publicados sin descripción (`detalle`
+// es requerido). Lo usan el webhook y el coordinador ANTES de generar el
+// uniqueKey, para que ambos caminos produzcan la misma clave (6/11/2026).
+const DETALLE_FALLBACK = '(sin detalle)';
+judicialMovementSchema.statics.normalizeDetalle = function(detalle) {
+  // Solo se reemplaza el vacío: un detalle con contenido se devuelve tal cual
+  // (sin trim) para no alterar el uniqueKey de movimientos ya registrados.
+  if (detalle == null || String(detalle).trim() === '') return DETALLE_FALLBACK;
+  return detalle;
+};
+
 // Método para generar clave única
 // Nota: movimientoFecha debe estar en formato YYYY-MM-DD para consistencia
 // Incluye hash del detalle para soportar múltiples movimientos del mismo tipo en el mismo día

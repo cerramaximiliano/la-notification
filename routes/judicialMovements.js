@@ -191,9 +191,10 @@ router.post('/webhook/daily-movements', authMiddleware.verifyServiceToken, async
         if (!movimiento.tipo) {
           throw new Error('movimiento.tipo es requerido');
         }
-        if (!movimiento.detalle) {
-          throw new Error('movimiento.detalle es requerido');
-        }
+        // Detalle vacío: el portal a veces publica movimientos sin descripción.
+        // Se notifica igual con un texto de respaldo (mismo valor que usa el
+        // coordinador, para que ambos caminos generen el mismo uniqueKey).
+        movimiento.detalle = JudicialMovement.normalizeDetalle(movimiento.detalle);
 
         // Normalizar fecha a formato YYYY-MM-DD para consistencia en uniqueKey
         let fechaNormalizada;
