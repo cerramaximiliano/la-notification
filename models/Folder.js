@@ -261,6 +261,12 @@ const FolderSchema = new Schema(
       enum: ["equipo", "responsables", "todos"],
       default: undefined,
     },
+    // Seguimiento de expediente importante (hub, 6/11/2026): sus movimientos nuevos van
+    // destacados en la campana y primero en el correo.
+    seguimiento: {
+      type: new Schema({ activo: { type: Boolean, default: false }, por: { type: Schema.Types.ObjectId }, desde: Date, nota: String }, { _id: false }),
+      default: undefined,
+    },
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: "User",

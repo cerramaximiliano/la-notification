@@ -151,11 +151,13 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
 
   // Chip de estado del folder en el header de la card (Activa verde /
   // Archivada ámbar). Solo cuando el caller resolvió el folder del usuario.
+  // Seguimiento (6/11/2026): chip ámbar delante del de estado.
+  const seguimientoChip = `<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;background-color:#FEF3C7;color:#78350F;border:1px solid #F59E0B;margin-right:6px;">&#9733; En seguimiento</span>`;
   const folderChip = (info) => {
     if (!info) return '';
-    return info.archived === true
+    return (info.seguimiento === true ? seguimientoChip : '') + (info.archived === true
       ? `<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;background-color:#FFF7ED;color:#B45309;border:1px solid #FDBA74;">Archivada</span>`
-      : `<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;background-color:#ECFDF5;color:#059669;border:1px solid #6EE7B7;">Activa</span>`;
+      : `<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;background-color:#ECFDF5;color:#059669;border:1px solid #6EE7B7;">Activa</span>`);
   };
 
   // Card blanca por movimiento, sobre la superficie gris de la causa.
@@ -214,6 +216,11 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
             <a href="{{folderUrl}}" style="font-size:13px;font-weight:600;color:#3A7BFF;text-decoration:none;">Ver causa completa en Law Analytics&nbsp;&#8594;</a>
           </td></tr>`;
 
+  // Seguimiento (6/11/2026): las carpetas marcadas van primero (en el listado compacto y en el
+  // detallado); el resto conserva el orden de llegada.
+  const enSeguimiento = (key) => (folderInfoByExpediente[key]?.seguimiento === true ? 1 : 0);
+  const expedienteEntries = Object.entries(movementsByExpediente).sort((a, b) => enSeguimiento(b[0]) - enSeguimiento(a[0]));
+
   // Formato LISTADO (options.compact): con muchos movimientos el correo no lista cada uno; va una
   // fila por causa con cuántos movimientos tuvo, de qué tipos y el link a la carpeta. Los
   // vencimientos de cédulas se mantienen (son accionables). Lo decide el caller por umbral
@@ -233,7 +240,7 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
             </table>
           </td></tr>`;
     let totalMovs = 0;
-    for (const [key, data] of Object.entries(movementsByExpediente)) {
+    for (const [key, data] of expedienteEntries) {
       const { expediente, movements } = data;
       totalMovs += movements.length;
       const conteoTipos = {};
@@ -259,7 +266,7 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
         movimientosRows: processTemplate(filaCompactaTemplate, { resumen: esc(resumen), tipos: esc(tiposTxt), ctaHtml, plazosHtml: plazos.map((p) => p.html).join('') }),
         folderCtaHtml: '',
       });
-      const folderStateText = folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '';
+      const folderStateText = (folderInfo?.seguimiento === true ? ' [EN SEGUIMIENTO]' : '') + (folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '');
       expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}${folderStateText}\n`;
       expedientesText += `Carátula: ${expediente.caratula}\n`;
       expedientesText += `${resumen}: ${tiposTxt}\n`;
@@ -280,8 +287,8 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
     };
   }
 
-  // Procesar cada expediente
-  for (const [key, data] of Object.entries(movementsByExpediente)) {
+  // Procesar cada expediente (detallado)
+  for (const [key, data] of expedienteEntries) {
     const { expediente, movements } = data;
     
     // Generar filas de movimientos
@@ -374,7 +381,7 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
     });
 
     // Versión texto
-    const folderStateText = folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '';
+    const folderStateText = (folderInfo?.seguimiento === true ? ' [EN SEGUIMIENTO]' : '') + (folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '');
     expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}${folderStateText}\n`;
     expedientesText += `Carátula: ${expediente.caratula}\n\n`;
     expedientesText += movimientosText;

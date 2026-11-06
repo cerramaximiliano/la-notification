@@ -662,14 +662,17 @@ async function sendJudicialMovementBrowserAlerts({
         // Carpeta del usuario para la causa (el click de la alerta navega a
         // /apps/folders/details/:folderId). Una consulta por expediente.
         const folderByCausa = new Map();
+        // Seguimiento (6/11/2026): causaId → true si la carpeta está marcada; la alerta lo dice.
+        const seguimientoByCausa = new Map();
         const resolveFolderId = async (causaId) => {
             if (!models.Folder || !causaId) return null;
             if (folderByCausa.has(causaId)) return folderByCausa.get(causaId);
             let folderId = null;
             try {
-                const folders = await models.Folder.find({ userId: userObjectId, causaId }, { _id: 1, archived: 1 }).lean();
+                const folders = await models.Folder.find({ userId: userObjectId, causaId }, { _id: 1, archived: 1, seguimiento: 1 }).lean();
                 const preferred = folders.find(f => f.archived !== true) || folders[0];
                 folderId = preferred ? preferred._id : null;
+                seguimientoByCausa.set(causaId, preferred?.seguimiento?.activo === true);
             } catch (e) {
                 logger.warn(`No se pudo resolver la carpeta de la causa ${causaId}: ${e.message}`);
             }
@@ -705,10 +708,25 @@ async function sendJudicialMovementBrowserAlerts({
         } catch (cfgErr) {
             logger.warn(`No se pudo leer digestCompact para alertas: ${cfgErr.message}`);
         }
+        // Seguimiento (6/11/2026): las carpetas marcadas nunca se diluyen en la alerta agrupada;
+        // tienen alerta propia («Seguimiento: …») y la agrupada cubre solo el resto.
+        let gruposAProcesar = groups;
+        let movimientosAgrupados = upcomingMovements;
+        let causasAgrupadas = groups.size;
         if (alertMinCausas > 0 && groups.size > alertMinCausas) {
-            const totalMovs = upcomingMovements.length;
-            const latest = upcomingMovements[upcomingMovements.length - 1];
-            const fechas = [...new Set(upcomingMovements.map((m) => moment.utc(m.movimiento.fecha).format('DD/MM/YYYY')))];
+            for (const cid of groups.keys()) if (!String(cid).startsWith('mov:')) await resolveFolderId(cid);
+            const gruposSeguimiento = new Map([...groups.entries()].filter(([cid]) => seguimientoByCausa.get(cid) === true));
+            if (gruposSeguimiento.size > 0) {
+                const resto = new Map([...groups.entries()].filter(([cid]) => seguimientoByCausa.get(cid) !== true));
+                gruposAProcesar = gruposSeguimiento;
+                movimientosAgrupados = [...resto.values()].flat();
+                causasAgrupadas = resto.size;
+            }
+        }
+        if (alertMinCausas > 0 && causasAgrupadas > alertMinCausas) {
+            const totalMovs = movimientosAgrupados.length;
+            const latest = movimientosAgrupados[movimientosAgrupados.length - 1];
+            const fechas = [...new Set(movimientosAgrupados.map((m) => moment.utc(m.movimiento.fecha).format('DD/MM/YYYY')))];
             try {
                 const newAlert = await models.Alert.create({
                     userId: userId,
@@ -717,7 +735,7 @@ async function sendJudicialMovementBrowserAlerts({
                     avatarType: 'icon',
                     avatarSize: 40,
                     primaryText: `${totalMovs} movimiento${totalMovs === 1 ? '' : 's'} nuevo${totalMovs === 1 ? '' : 's'}`,
-                    secondaryText: `en ${groups.size} causas · ${fechas.length === 1 ? fechas[0] : `hasta ${moment.utc(latest.movimiento.fecha).format('DD/MM/YYYY')}`}`,
+                    secondaryText: `en ${causasAgrupadas} causas · ${fechas.length === 1 ? fechas[0] : `hasta ${moment.utc(latest.movimiento.fecha).format('DD/MM/YYYY')}`}`,
                     expirationDate: latest.movimiento.fecha,
                     actionText: 'Ver novedades'
                 });
@@ -727,25 +745,31 @@ async function sendJudicialMovementBrowserAlerts({
                     logger.error(`Error al enviar la alerta agrupada por WebSocket: ${wsError.message}`);
                 }
                 pushChannel.pushAlert(userId, newAlert);
-                logger.info(`Alerta agrupada para ${userId}: ${totalMovs} movimientos en ${groups.size} causas (umbral ${alertMinCausas})`);
-                return {
-                    success: true,
-                    statusCode: 200,
-                    message: `Alerta agrupada: ${totalMovs} movimiento(s) en ${groups.size} causa(s)`,
-                    count: totalMovs,
-                    alertsCount: 1,
-                    grouped: true,
-                    notified: true,
-                    userId: userId,
-                    movementIds: upcomingMovements.map(m => m._id),
-                    daysInAdvance: globalDaysInAdvance
-                };
+                logger.info(`Alerta agrupada para ${userId}: ${totalMovs} movimientos en ${causasAgrupadas} causas (umbral ${alertMinCausas})`);
+                if (gruposAProcesar === groups) {
+                    return {
+                        success: true,
+                        statusCode: 200,
+                        message: `Alerta agrupada: ${totalMovs} movimiento(s) en ${causasAgrupadas} causa(s)`,
+                        count: totalMovs,
+                        alertsCount: 1,
+                        grouped: true,
+                        notified: true,
+                        userId: userId,
+                        movementIds: upcomingMovements.map(m => m._id),
+                        daysInAdvance: globalDaysInAdvance
+                    };
+                }
+                // Hay carpetas en seguimiento: la agrupada cubrió el resto; ellas siguen una por una.
+                alertsCreated = 1;
+                processedMovements.push(...movimientosAgrupados);
             } catch (groupErr) {
                 logger.error(`No se pudo crear la alerta agrupada (sigue por causa): ${groupErr.message}`);
+                gruposAProcesar = groups;
             }
         }
 
-        for (const group of groups.values()) {
+        for (const group of gruposAProcesar.values()) {
             // upcomingMovements viene ordenado por fecha ascendente: el último es
             // el más reciente y es el que representa al grupo.
             const latest = group[group.length - 1];
@@ -753,6 +777,7 @@ async function sendJudicialMovementBrowserAlerts({
                 const formattedDate = moment.utc(latest.movimiento.fecha).format('DD/MM/YYYY');
                 const folderId = await resolveFolderId(latest.expediente && latest.expediente.id);
                 const isSingle = group.length === 1;
+                const enSeguimiento = seguimientoByCausa.get(latest.expediente && latest.expediente.id) === true;
 
                 // sourceType 'movement' + avatarIcon 'TableDocument': únicos valores del
                 // enum de Alert (la-notification / hub / la-subscriptions) que el front
@@ -765,7 +790,10 @@ async function sendJudicialMovementBrowserAlerts({
                     avatarSize: 40,
                     // Sin el tipo de movimiento: denominaciones como "DESPACHO" no
                     // dicen nada y el detalle está en la carpeta.
-                    primaryText: isSingle ? 'Nuevo movimiento' : 'Nuevos movimientos',
+                    // Carpeta en seguimiento: el front destaca en ámbar las alertas que empiezan con «Seguimiento:».
+                    primaryText: enSeguimiento
+                        ? (isSingle ? 'Seguimiento: nuevo movimiento' : 'Seguimiento: nuevos movimientos')
+                        : (isSingle ? 'Nuevo movimiento' : 'Nuevos movimientos'),
                     secondaryText: `${latest.expediente.caratula} · ${formattedDate}`,
                     expirationDate: latest.movimiento.fecha,
                     actionText: 'Ver movimientos'

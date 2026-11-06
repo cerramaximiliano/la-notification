@@ -1334,10 +1334,10 @@ async function sendJudicialMovementNotifications({
             }
             for (const causaId of causaIds) {
                 try {
-                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered deletedAt').lean();
+                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered deletedAt seguimiento').lean();
                     if (!folder && teamScope) {
                         folder = await Folder.findOne({ causaId, $or: [{ groupId: teamScope._id }, { userId: teamScope.owner }] })
-                            .select('_id archived folderName causaCredentialCovered deletedAt').lean();
+                            .select('_id archived folderName causaCredentialCovered deletedAt seguimiento').lean();
                     }
                     if (folder) folderByCausa[causaId] = folder;
                 } catch (folderErr) {
@@ -1594,7 +1594,8 @@ async function sendJudicialMovementNotifications({
             const folder = folderByCausa[causaId];
             if (folder) {
                 folderIdByExpediente[key] = String(folder._id);
-                folderInfoByExpediente[key] = { archived: folder.archived === true };
+                // Seguimiento (6/11/2026): la card va primero y con chip «En seguimiento».
+                folderInfoByExpediente[key] = { archived: folder.archived === true, seguimiento: folder.seguimiento?.activo === true };
                 if (folder.folderName) folderNameByExpediente[key] = folder.folderName;
             }
         }
