@@ -227,52 +227,71 @@ function processJudicialMovementsData(movementsByExpediente, user, options = {})
   // (config.digestCompact). Caso que lo motivó: sincronización inicial de una credencial de 4.400
   // causas, decenas de movimientos del día en el primer resumen (5/11/2026).
   if (options.compact === true) {
-    const filaCompactaTemplate = `
-          <tr><td style="background-color:#F8FAFC;padding:0 18px 12px 18px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border:1px solid #E6EAF2;border-radius:8px;">
-              <tr><td style="padding:10px 14px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-                  <td style="font-size:13px;font-weight:600;color:#0F172A;">{{resumen}}</td>
-                  <td align="right" style="font-size:12px;white-space:nowrap;">{{ctaHtml}}</td>
-                </tr></table>
-                <p style="margin:4px 0 0 0;font-size:12px;line-height:1.5;color:#64748B;">{{tipos}}</p>{{plazosHtml}}
-              </td></tr>
-            </table>
+    // Rediseño 7/11/2026: una sola línea por causa (sin superficie gris + card blanca) y dos
+    // bloques dentro de la misma sección: carpetas activas (las en seguimiento primero) y, debajo,
+    // archivadas. En las archivadas no va el detalle de tipos: solo cuántos movimientos y el link.
+    // Caso: 228 movimientos en 65 causas daban 140 KB con el listado anterior.
+    const filaListadoTemplate = `
+          <tr><td style="padding:9px 18px;border-top:1px solid #EEF2F7;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td style="vertical-align:top;">
+                <p style="margin:0;font-size:13px;line-height:1.4;color:#0F172A;font-weight:600;">{{caratula}}</p>
+                <p style="margin:2px 0 0 0;font-size:12px;line-height:1.4;color:#64748B;">{{seguimientoChipHtml}}{{numberYear}} · {{fuero}} · {{resumen}}{{tipos}}</p>{{plazosHtml}}
+              </td>
+              <td align="right" style="vertical-align:top;white-space:nowrap;padding-left:12px;font-size:12px;">{{ctaHtml}}</td>
+            </tr></table>
           </td></tr>`;
+    const bloqueTemplate = `
+          <tr><td style="background-color:#F8FAFC;border-top:1px solid #E6EAF2;padding:8px 18px;">
+            <p style="margin:0;font-size:11px;color:#475569;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;">{{titulo}}</p>
+          </td></tr>{{filas}}`;
+    const seguimientoChipListado = `<span style="display:inline-block;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;background-color:#FEF3C7;color:#78350F;border:1px solid #F59E0B;margin-right:6px;">&#9733; Seguimiento</span>`;
+    // Sin folder resuelto se trata como activa (no hay motivo para esconderla abajo).
+    const esArchivada = (key) => folderInfoByExpediente[key]?.archived === true && folderInfoByExpediente[key]?.seguimiento !== true;
+    const activas = expedienteEntries.filter(([key]) => !esArchivada(key));
+    const archivadas = expedienteEntries.filter(([key]) => esArchivada(key));
     let totalMovs = 0;
-    for (const [key, data] of expedienteEntries) {
-      const { expediente, movements } = data;
-      totalMovs += movements.length;
-      const conteoTipos = {};
-      for (const m of movements) { const t = (m.movimiento.tipo || 'Movimiento').trim(); conteoTipos[t] = (conteoTipos[t] || 0) + 1; }
-      const tiposOrdenados = Object.entries(conteoTipos).sort((a, b) => b[1] - a[1]);
-      const tiposTxt = tiposOrdenados.slice(0, 4).map(([t, n]) => (n > 1 ? `${t} (${n})` : t)).join(' · ') + (tiposOrdenados.length > 4 ? ` · y ${tiposOrdenados.length - 4} tipo(s) más` : '');
-      // La fecha del movimiento es un día (medianoche UTC): formatear en UTC, no en la zona del server.
-      const fechas = [...new Set(movements.map((m) => moment.utc(m.movimiento.fecha).format('DD/MM/YYYY')))];
-      const resumen = `${movements.length} movimiento${movements.length === 1 ? '' : 's'}${fechas.length === 1 ? ` del ${fechas[0]}` : ''}`;
-      const plazos = movements.map((m) => plazoDeMovimiento(m)).filter((p) => p.html);
-      const folderId = folderIdByExpediente[key];
-      const folderUrl = folderId ? `${frontBaseUrl}/apps/folders/details/${folderId}` : null;
-      const ctaHtml = folderUrl ? `<a href="${folderUrl}" style="font-weight:600;color:#3A7BFF;text-decoration:none;">Ver causa&nbsp;&#8594;</a>` : '';
-      const numberYear = expedienteLabel(expediente);
-      const folderInfo = folderInfoByExpediente[key];
-      expedientesHtml += processTemplate(expedienteTemplate, {
-        number: expediente.number,
-        year: expediente.year,
-        numberYear,
-        fuero: esc(expediente.fuero),
-        caratula: esc(expediente.caratula),
-        folderChipHtml: folderChip(folderInfo),
-        movimientosRows: processTemplate(filaCompactaTemplate, { resumen: esc(resumen), tipos: esc(tiposTxt), ctaHtml, plazosHtml: plazos.map((p) => p.html).join('') }),
-        folderCtaHtml: '',
-      });
-      const folderStateText = (folderInfo?.seguimiento === true ? ' [EN SEGUIMIENTO]' : '') + (folderInfo ? (folderInfo.archived === true ? ' [CARPETA ARCHIVADA]' : ' [carpeta activa]') : '');
-      expedientesText += `\nExpediente ${numberYear} - ${expediente.fuero}${folderStateText}\n`;
-      expedientesText += `Carátula: ${expediente.caratula}\n`;
-      expedientesText += `${resumen}: ${tiposTxt}\n`;
-      for (const p of plazos) expedientesText += p.text;
-      if (folderUrl) expedientesText += `Ver causa: ${folderUrl}\n`;
-    }
+    const renderBloque = (entries, titulo, conTipos) => {
+      let filas = '';
+      let texto = `\n${titulo.toUpperCase()}\n`;
+      for (const [key, data] of entries) {
+        const { expediente, movements } = data;
+        totalMovs += movements.length;
+        const conteoTipos = {};
+        for (const m of movements) { const t = (m.movimiento.tipo || 'Movimiento').trim(); conteoTipos[t] = (conteoTipos[t] || 0) + 1; }
+        const tiposOrdenados = Object.entries(conteoTipos).sort((a, b) => b[1] - a[1]);
+        const tiposTxt = conTipos
+          ? tiposOrdenados.slice(0, 3).map(([t, n]) => (n > 1 ? `${t} (${n})` : t)).join(' · ') + (tiposOrdenados.length > 3 ? ` · +${tiposOrdenados.length - 3}` : '')
+          : '';
+        // La fecha del movimiento es un día (medianoche UTC): formatear en UTC, no en la zona del server.
+        const fechas = [...new Set(movements.map((m) => moment.utc(m.movimiento.fecha).format('DD/MM')))];
+        const resumen = `${movements.length} mov.${fechas.length === 1 ? ` del ${fechas[0]}` : ''}`;
+        const plazos = movements.map((m) => plazoDeMovimiento(m)).filter((p) => p.html);
+        const folderId = folderIdByExpediente[key];
+        const folderUrl = folderId ? `${frontBaseUrl}/apps/folders/details/${folderId}` : null;
+        const ctaHtml = folderUrl ? `<a href="${folderUrl}" style="font-weight:600;color:#3A7BFF;text-decoration:none;">Ver&nbsp;&#8594;</a>` : '';
+        const numberYear = expedienteLabel(expediente);
+        const enSeg = folderInfoByExpediente[key]?.seguimiento === true;
+        filas += processTemplate(filaListadoTemplate, {
+          caratula: esc(expediente.caratula),
+          seguimientoChipHtml: enSeg ? seguimientoChipListado : '',
+          numberYear: esc(numberYear),
+          fuero: esc(expediente.fuero),
+          resumen: esc(resumen),
+          tipos: tiposTxt ? ` · ${esc(tiposTxt)}` : '',
+          plazosHtml: plazos.map((p) => p.html).join(''),
+          ctaHtml,
+        });
+        texto += `- ${expediente.caratula} — ${numberYear} ${expediente.fuero}${enSeg ? ' [EN SEGUIMIENTO]' : ''} — ${resumen}${tiposTxt ? `: ${tiposTxt}` : ''}\n`;
+        for (const p of plazos) texto += p.text;
+        if (folderUrl) texto += `  Ver causa: ${folderUrl}\n`;
+      }
+      return { html: filas ? processTemplate(bloqueTemplate, { titulo: esc(titulo), filas }) : '', texto: filas ? texto : '' };
+    };
+    const bloqueActivas = renderBloque(activas, `Carpetas activas (${activas.length})`, true);
+    const bloqueArchivadas = renderBloque(archivadas, `Carpetas archivadas (${archivadas.length})`, false);
+    expedientesHtml = bloqueActivas.html + bloqueArchivadas.html;
+    expedientesText = bloqueActivas.texto + bloqueArchivadas.texto;
     const tituloListado = `${options.sectionTitle || 'Movimientos nuevos'} · ${totalMovs} en ${Object.keys(movementsByExpediente).length} causas`;
     if (expedientesHtml) expedientesHtml = processTemplate(sectionWrapperTemplate, { sectionTitle: esc(tituloListado), segments: expedientesHtml });
     return {
