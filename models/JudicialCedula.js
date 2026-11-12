@@ -16,6 +16,9 @@ const judicialCedulaSchema = new mongoose.Schema({
   // Datos del expediente (display)
   expediente: {
     id: { type: String, required: true },
+    // Causa vinculada (ObjectId en string, 12/11/2026): `id` es el del portal y no sirve para
+    // encontrar la carpeta.
+    causaId: { type: String },
     number: { type: Number },
     year: { type: Number },
     fuero: { type: String, required: true },

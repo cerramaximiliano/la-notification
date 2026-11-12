@@ -23,6 +23,20 @@ const { isTrashed } = require('./trashedFolders');
 const SOURCE_COLLECTION = 'pjn-notifications';
 const BATCH_LIMIT = 500;
 
+/**
+ * Id de la causa (ObjectId en string) de una notificación de bandeja, o null (12/11/2026).
+ * `expediente.id` es el id numérico del portal, NO sirve para buscar la carpeta: antes se usaba
+ * ese valor, la carpeta nunca aparecía y la cédula se avisaba a todo el equipo ignorando la
+ * regla de responsables y la papelera. El vínculo con la causa lo escribe pjn-mis-causas en
+ * `vinculo.causaId` (estado 'vinculada' o 'sin_movimiento').
+ */
+function causaIdDeNotificacion(doc) {
+  const v = doc && doc.vinculo && doc.vinculo.causaId;
+  if (!v) return null;
+  const s = String(v);
+  return mongoose.Types.ObjectId.isValid(s) ? s : null;
+}
+
 // Día calendario en Argentina (UTC-3 fijo; Argentina no usa DST).
 function argentinaDayStr(date) {
   const d = new Date(date);
@@ -132,19 +146,24 @@ async function coordinateJudicialCedulas(options = {}) {
         let recipients = [ownerId];
         const ctx = await resolveTeamContextForUser(ownerId, teamCache);
         // Carpeta de la causa (del equipo o del propio usuario): decide los destinatarios y, si está en la
-        // papelera (2/11/2026), que no se avise a nadie.
-        const causaIds = [expedienteId, ...(mongoose.Types.ObjectId.isValid(expedienteId) ? [new mongoose.Types.ObjectId(expedienteId)] : [])];
+        // papelera (2/11/2026), que no se avise a nadie. Se busca por la causa vinculada (12/11/2026),
+        // no por el id del portal.
+        const causaId = causaIdDeNotificacion(doc);
         const dueños = ctx
           ? [{ groupId: new mongoose.Types.ObjectId(ctx.groupId) }, { userId: new mongoose.Types.ObjectId(ctx.owner) }]
           : [{ userId: new mongoose.Types.ObjectId(ownerId) }];
         let folder = null;
-        try {
-          folder = await mongoose.connection.db.collection('folders').findOne(
-            { causaId: { $in: causaIds }, $or: dueños },
-            { projection: { responsables: 1, notificationPolicy: 1, createdBy: 1, deletedAt: 1 } }
-          );
-        } catch (e) {
-          logger.warn(`[CoordinatorCedulas] no se pudo leer la carpeta de ${expedienteId}: ${e.message}`);
+        if (causaId) {
+          try {
+            folder = await mongoose.connection.db.collection('folders').findOne(
+              { causaId: { $in: [causaId, new mongoose.Types.ObjectId(causaId)] }, $or: dueños },
+              { projection: { responsables: 1, notificationPolicy: 1, createdBy: 1, deletedAt: 1 } }
+            );
+          } catch (e) {
+            logger.warn(`[CoordinatorCedulas] no se pudo leer la carpeta de la causa ${causaId}: ${e.message}`);
+          }
+        } else {
+          stats.sinVinculo = (stats.sinVinculo || 0) + 1;
         }
         if (isTrashed(folder)) {
           stats.cedulasSinAvisoPapelera = (stats.cedulasSinAvisoPapelera || 0) + 1;
@@ -169,6 +188,7 @@ async function coordinateJudicialCedulas(options = {}) {
               userId: new mongoose.Types.ObjectId(recipientId),
               expediente: {
                 id: expedienteId,
+                causaId: causaId || undefined,
                 number: expediente.numero,
                 year: expediente.anio,
                 fuero: deriveFuero(expediente),
@@ -228,4 +248,4 @@ async function coordinateJudicialCedulas(options = {}) {
   }
 }
 
-module.exports = { coordinateJudicialCedulas };
+module.exports = { coordinateJudicialCedulas, _internals: { causaIdDeNotificacion } };

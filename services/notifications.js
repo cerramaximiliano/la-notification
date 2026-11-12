@@ -1601,7 +1601,8 @@ async function sendJudicialMovementNotifications({
         }
         // Cédulas: nombre de carpeta para el WhatsApp (el email usa la carátula).
         for (const [key, data] of Object.entries(cedulasByExpediente)) {
-            const causaId = data.expediente?.id;
+            // La carpeta se busca por la causa vinculada (12/11/2026); `expediente.id` es el id del portal.
+            const causaId = data.expediente?.causaId;
             if (!causaId || folderNameByExpediente[key]) continue;
             try {
                 const folder = folderByCausa[causaId] || await Folder.findOne({ causaId, userId }).select('folderName').lean();
