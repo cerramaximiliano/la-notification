@@ -1334,10 +1334,10 @@ async function sendJudicialMovementNotifications({
             }
             for (const causaId of causaIds) {
                 try {
-                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered deletedAt seguimiento').lean();
+                    let folder = await Folder.findOne({ causaId, userId }).select('_id archived folderName causaCredentialCovered deletedAt storageHiddenAt seguimiento').lean();
                     if (!folder && teamScope) {
                         folder = await Folder.findOne({ causaId, $or: [{ groupId: teamScope._id }, { userId: teamScope.owner }] })
-                            .select('_id archived folderName causaCredentialCovered deletedAt seguimiento').lean();
+                            .select('_id archived folderName causaCredentialCovered deletedAt storageHiddenAt seguimiento').lean();
                     }
                     if (folder) folderByCausa[causaId] = folder;
                 } catch (folderErr) {
@@ -1389,6 +1389,11 @@ async function sendJudicialMovementNotifications({
                 // Papelera (2/11/2026): la carpeta sigue actualizándose pero no avisa.
                 if (isTrashed(folder)) {
                     toSkip.push({ movement, reason: 'Carpeta en la papelera: sin avisos' });
+                    continue;
+                }
+                // Oculta por almacenamiento (24/11/2026): el usuario no la ve hasta subir de plan, así que no avisa.
+                if (folder && folder.storageHiddenAt) {
+                    toSkip.push({ movement, reason: 'Carpeta oculta por almacenamiento: sin avisos' });
                     continue;
                 }
                 if (policy.notifyArchivedFolders === false && folder && folder.archived === true) {

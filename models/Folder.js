@@ -184,6 +184,11 @@ const FolderSchema = new Schema(
       type: Date,
       default: null,
     },
+    // Oculta por almacenamiento (24/11/2026): tampoco recibe avisos hasta que el usuario sube de plan.
+    storageHiddenAt: {
+      type: Date,
+      default: null,
+    },
     deletedBy: {
       type: Schema.Types.ObjectId,
       ref: "User",
